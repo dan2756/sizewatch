@@ -12,6 +12,9 @@ import (
 
 // Options controls how a tree is measured.
 type Options struct {
+	// Apparent counts file sizes (st_size) instead of allocated disk
+	// blocks. Sparse files then count in full and small files count less.
+	Apparent bool
 	// Workers bounds how many goroutines walk the tree at once.
 	// Zero or less means DefaultWorkers().
 	Workers int
@@ -20,7 +23,7 @@ type Options struct {
 // Result is the outcome of measuring one tree.
 type Result struct {
 	Path     string // the root as given to Measure
-	Bytes    int64  // allocated bytes of everything under the root
+	Bytes    int64  // allocated (or apparent) bytes under the root
 	Files    int64  // non-directory entries, hard links counted once
 	Dirs     int64  // directories, including the root
 	Warnings int64  // entries that could not be read and were skipped
@@ -157,7 +160,7 @@ func (w *walker) spawn(dir string) bool {
 }
 
 func (w *walker) size(info fs.FileInfo, st stat, hasStat bool) int64 {
-	if !hasStat {
+	if w.opts.Apparent || !hasStat {
 		return info.Size()
 	}
 	return st.blocks * 512

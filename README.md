@@ -23,7 +23,8 @@ sizewatch du ~/Downloads ./node_modules
 ```
 
 Sizes are allocated disk usage (like `du`), in decimal units (1 GB = 10^9
-bytes). Hard-linked files are counted once and symlinks are never followed.
+bytes). Pass `--apparent` to sum file sizes instead. Hard-linked files are
+counted once and symlinks are never followed.
 
 ## License
 

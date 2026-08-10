@@ -10,6 +10,7 @@ import (
 
 func (a *app) du(ctx context.Context, args []string) error {
 	fs := newFlagSet("du", "PATH... [flags]", "Print the disk usage of each path.")
+	apparent := fs.Bool("apparent", false, "count apparent file sizes instead of allocated disk usage")
 	workers := fs.Int("workers", 0, "concurrent directory walkers (0 picks a default from the CPU count)")
 	paths, err := a.parseArgs(fs, args)
 	if err != nil {
@@ -21,7 +22,7 @@ func (a *app) du(ctx context.Context, args []string) error {
 
 	failed := false
 	for _, p := range paths {
-		res, err := walk.Measure(ctx, p, walk.Options{Workers: *workers})
+		res, err := walk.Measure(ctx, p, walk.Options{Apparent: *apparent, Workers: *workers})
 		if err != nil {
 			a.errorf("%v", err)
 			failed = true
