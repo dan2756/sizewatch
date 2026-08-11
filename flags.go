@@ -5,7 +5,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"text/tabwriter"
+
+	"github.com/dan2756/sizewatch/internal/history"
+	"github.com/dan2756/sizewatch/internal/walk"
 )
 
 // usageError is a bad command line; it exits with status 2.
@@ -86,4 +90,57 @@ func printFlags(w io.Writer, fs *flag.FlagSet) {
 	})
 	fmt.Fprintf(tw, "  -h, --help\tshow this help\n")
 	tw.Flush()
+}
+
+// measureFlags are the walker options shared by du, once and watch.
+type measureFlags struct {
+	apparent bool
+	workers  int
+}
+
+func (m *measureFlags) register(fs *flag.FlagSet) {
+	fs.BoolVar(&m.apparent, "apparent", false, "count apparent file sizes instead of allocated disk usage")
+	fs.IntVar(&m.workers, "workers", 0, "concurrent directory walkers (0 picks a default from the CPU count)")
+}
+
+func (m *measureFlags) options() walk.Options {
+	return walk.Options{Apparent: m.apparent, Workers: m.workers}
+}
+
+// historyFlags locate the history file.
+type historyFlags struct {
+	file string
+}
+
+func (h *historyFlags) register(fs *flag.FlagSet) {
+	fs.StringVar(&h.file, "history", "", "history `FILE` (default $SIZEWATCH_HISTORY, else $XDG_STATE_HOME/sizewatch/history.jsonl)")
+}
+
+func (h *historyFlags) open() (*history.Store, error) {
+	if h.file != "" {
+		return history.Open(h.file), nil
+	}
+	p, err := history.DefaultPath()
+	if err != nil {
+		return nil, err
+	}
+	return history.Open(p), nil
+}
+
+// absPaths makes paths absolute, since they key the history, and drops
+// duplicates.
+func absPaths(paths []string) ([]string, error) {
+	seen := make(map[string]bool)
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil, err
+		}
+		if !seen[abs] {
+			seen[abs] = true
+			out = append(out, abs)
+		}
+	}
+	return out, nil
 }

@@ -25,6 +25,7 @@ var version = ""
 const usage = `sizewatch - tracks folder growth and runs a hook on spikes
 
 Usage:
+  sizewatch once PATH... [flags]      take one sample and compare with the last
   sizewatch du PATH...                print the disk usage of each path
 
 Run 'sizewatch COMMAND -h' for the flags of a command.
@@ -45,7 +46,8 @@ type app struct {
 type command func(a *app, ctx context.Context, args []string) error
 
 var commands = map[string]command{
-	"du": (*app).du,
+	"once": (*app).once,
+	"du":   (*app).du,
 }
 
 func main() {

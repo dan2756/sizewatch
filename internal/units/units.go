@@ -26,3 +26,11 @@ func FormatSize(n int64) string {
 	}
 	return sign + strconv.FormatFloat(v, 'f', 1, 64) + " " + decimalUnits[u]
 }
+
+// FormatDelta is FormatSize with an explicit sign, e.g. "+1.2 GB".
+func FormatDelta(n int64) string {
+	if n < 0 {
+		return FormatSize(n)
+	}
+	return "+" + FormatSize(n)
+}
