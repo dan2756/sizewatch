@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/dan2756/sizewatch/internal/history"
+	"github.com/dan2756/sizewatch/internal/trigger"
+	"github.com/dan2756/sizewatch/internal/units"
 	"github.com/dan2756/sizewatch/internal/walk"
 )
 
@@ -107,6 +111,25 @@ func (m *measureFlags) options() walk.Options {
 	return walk.Options{Apparent: m.apparent, Workers: m.workers}
 }
 
+// triggerFlags configure alerts for once and watch.
+type triggerFlags struct {
+	spike sizeValue
+	pct   percentValue
+	max   sizeValue
+	hook  string
+}
+
+func (t *triggerFlags) register(fs *flag.FlagSet) {
+	fs.Var(&t.spike, "spike", "alert when a path grows by `SIZE` since the previous sample (e.g. 500MB)")
+	fs.Var(&t.pct, "spike-pct", "alert when a path grows by `PERCENT` since the previous sample")
+	fs.Var(&t.max, "max", "alert when a path is at least `SIZE` (e.g. 10GB)")
+	fs.StringVar(&t.hook, "hook", "", "run `COMMAND` with sh -c when an alert fires (see SIZEWATCH_* variables)")
+}
+
+func (t *triggerFlags) config() trigger.Config {
+	return trigger.Config{Spike: int64(t.spike), SpikePct: float64(t.pct), Max: int64(t.max)}
+}
+
 // historyFlags locate the history file.
 type historyFlags struct {
 	file string
@@ -143,4 +166,42 @@ func absPaths(paths []string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// sizeValue is a flag holding a byte count written like 500MB or 2GiB.
+type sizeValue int64
+
+func (v *sizeValue) Set(s string) error {
+	n, err := units.ParseSize(s)
+	if err != nil {
+		return err
+	}
+	*v = sizeValue(n)
+	return nil
+}
+
+func (v *sizeValue) String() string {
+	if v == nil || *v == 0 {
+		return ""
+	}
+	return units.FormatSize(int64(*v))
+}
+
+// percentValue is a flag holding a positive percentage, with or without "%".
+type percentValue float64
+
+func (v *percentValue) Set(s string) error {
+	f, err := strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(s), "%"), 64)
+	if err != nil || f <= 0 {
+		return fmt.Errorf("invalid percentage %q", s)
+	}
+	*v = percentValue(f)
+	return nil
+}
+
+func (v *percentValue) String() string {
+	if v == nil || *v == 0 {
+		return ""
+	}
+	return strconv.FormatFloat(float64(*v), 'g', -1, 64)
 }

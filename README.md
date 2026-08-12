@@ -32,6 +32,22 @@ sizewatch once ~/Downloads ./node_modules
 /Users/dj/proj/node_modules  412.0 MB  first sample
 ```
 
+Add triggers and a hook to get told about growth:
+
+```sh
+sizewatch once ~/Downloads --spike 500MB --max 20GB \
+  --hook 'notify "$SIZEWATCH_PATH grew by $SIZEWATCH_DELTA_HUMAN"'
+```
+
+`--spike SIZE` fires on growth since the previous sample, `--spike-pct N` on
+percentage growth and `--max SIZE` when a folder reaches a ceiling. The hook
+runs with `sh -c` and gets `SIZEWATCH_PATH`, `SIZEWATCH_BYTES`,
+`SIZEWATCH_PREV_BYTES`, `SIZEWATCH_DELTA_BYTES`, `SIZEWATCH_DELTA_HUMAN` and
+`SIZEWATCH_REASON` (`spike`, `pct` or `max`) in its environment.
+
+Sizes accept decimal units (KB, MB, GB, TB = powers of 1000) and binary
+units (KiB, MiB, GiB, TiB = powers of 1024).
+
 Samples are appended to `$XDG_STATE_HOME/sizewatch/history.jsonl` (default
 `~/.local/state/sizewatch/history.jsonl`); set `SIZEWATCH_HISTORY` or pass
 `--history FILE` to use another file.

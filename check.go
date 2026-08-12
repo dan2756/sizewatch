@@ -3,21 +3,26 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"github.com/dan2756/sizewatch/internal/history"
+	"github.com/dan2756/sizewatch/internal/trigger"
 	"github.com/dan2756/sizewatch/internal/units"
 	"github.com/dan2756/sizewatch/internal/walk"
 )
 
-// monitor takes samples and compares them with the previous ones. once runs
-// a single round; watch runs one per interval.
+// monitor takes samples, evaluates the triggers against the previous sample
+// of each path and runs the hook. once runs a single round; watch runs one
+// per interval.
 type monitor struct {
-	a       *app
-	store   *history.Store
-	measure walk.Options
-	prev    map[string]history.Sample // latest sample per path
+	a        *app
+	store    *history.Store
+	measure  walk.Options
+	triggers trigger.Config
+	hook     string                    // shell command; empty means just report
+	prev     map[string]history.Sample // latest sample per path
 }
 
 // outcome is what one round found for one path.
@@ -25,10 +30,14 @@ type outcome struct {
 	Sample   history.Sample
 	Prev     *history.Sample // nil for the first sample of a path
 	Warnings int64
+	Reasons  []trigger.Reason // triggers that fired
+	HookErr  error
 	Err      error // the path could not be measured
 }
 
-// round measures each path once and appends the samples to the history.
+// round measures each path once, runs the hook for those that trigger and
+// appends the samples to the history. Hooks run before the history is
+// written so that a full disk still gets its alert.
 func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) {
 	outs := make([]outcome, 0, len(paths))
 	var fresh []history.Sample
@@ -50,6 +59,11 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 		}
 		m.prev[p] = o.Sample
 		fresh = append(fresh, o.Sample)
+		o.Reasons = trigger.Evaluate(m.triggers, o.Prev, o.Sample)
+		if len(o.Reasons) > 0 && m.hook != "" {
+			ev := trigger.Event{Cur: o.Sample, Prev: o.Prev, Reasons: o.Reasons}
+			o.HookErr = trigger.RunHook(ctx, m.hook, ev, m.a.stdout, m.a.stderr)
+		}
 		outs = append(outs, o)
 	}
 	if err := m.store.Append(fresh...); err != nil {
@@ -59,8 +73,8 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 }
 
 // report prints one line per path to stdout and problems to stderr. A
-// non-empty stamp is printed first on each line. It returns false if any
-// path failed.
+// non-empty stamp is printed first on each line. With quiet, only paths
+// that triggered are listed. It returns false if a path or hook failed.
 func (m *monitor) report(outs []outcome, stamp string, quiet bool) bool {
 	ok := true
 	tw := tabwriter.NewWriter(m.a.stdout, 0, 0, 2, ' ', 0)
@@ -71,13 +85,17 @@ func (m *monitor) report(outs []outcome, stamp string, quiet bool) bool {
 			continue
 		}
 		m.a.warnSkipped(o.Sample.Path, o.Warnings)
-		if quiet {
+		if o.HookErr != nil {
+			m.a.errorf("%s: %v", o.Sample.Path, o.HookErr)
+			ok = false
+		}
+		if quiet && len(o.Reasons) == 0 {
 			continue
 		}
 		if stamp != "" {
 			fmt.Fprintf(tw, "%s\t", stamp)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\n", o.Sample.Path, units.FormatSize(o.Sample.Bytes), describeChange(o))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", o.Sample.Path, units.FormatSize(o.Sample.Bytes), describeChange(o), describeAlert(o))
 	}
 	tw.Flush()
 	return ok
@@ -88,6 +106,21 @@ func describeChange(o outcome) string {
 		return "first sample"
 	}
 	return units.FormatDelta(o.Sample.Bytes-o.Prev.Bytes) + " in " + formatSpan(o.Sample.Time.Sub(o.Prev.Time))
+}
+
+func describeAlert(o outcome) string {
+	if len(o.Reasons) == 0 {
+		return ""
+	}
+	parts := make([]string, len(o.Reasons))
+	for i, r := range o.Reasons {
+		parts[i] = string(r)
+	}
+	note := "ALERT " + strings.Join(parts, ",")
+	if o.HookErr != nil {
+		note += " (hook failed)"
+	}
+	return note
 }
 
 // formatSpan renders a duration coarsely: 45s, 12m, 5h, 3d.
