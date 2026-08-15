@@ -3,6 +3,7 @@ package units
 import (
 	"math"
 	"testing"
+	"time"
 )
 
 func TestParseSize(t *testing.T) {
@@ -90,6 +91,55 @@ func TestParseFormatRoundTrip(t *testing.T) {
 		}
 		if math.Abs(float64(back-n)) > float64(n)/100 {
 			t.Errorf("%d -> %q -> %d", n, FormatSize(n), back)
+		}
+	}
+}
+
+func TestParseDuration(t *testing.T) {
+	tests := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"0", 0},
+		{"90s", 90 * time.Second},
+		{"5m", 5 * time.Minute},
+		{"1h30m", 90 * time.Minute},
+		{"30d", 30 * 24 * time.Hour},
+		{"1w", 7 * 24 * time.Hour},
+		{"2w3d", 17 * 24 * time.Hour},
+		{"1d12h", 36 * time.Hour},
+		{" 12h ", 12 * time.Hour},
+	}
+	for _, tt := range tests {
+		got, err := ParseDuration(tt.in)
+		if err != nil || got != tt.want {
+			t.Errorf("ParseDuration(%q) = %v, %v; want %v", tt.in, got, err, tt.want)
+		}
+	}
+	for _, in := range []string{"", "5", "d", "1.5d", "-5m", "1d-1h", "3x", "1d1w", "99999999999999w"} {
+		if got, err := ParseDuration(in); err == nil {
+			t.Errorf("ParseDuration(%q) = %v, want error", in, got)
+		}
+	}
+}
+
+func TestFormatDuration(t *testing.T) {
+	tests := map[time.Duration]string{
+		0:                       "0",
+		90 * time.Second:        "1m30s",
+		5 * time.Minute:         "5m",
+		time.Hour:               "1h",
+		90 * time.Minute:        "1h30m",
+		36 * time.Hour:          "36h",
+		30 * 24 * time.Hour:     "30d",
+		1500 * time.Millisecond: "1.5s",
+	}
+	for in, want := range tests {
+		if got := FormatDuration(in); got != want {
+			t.Errorf("FormatDuration(%v) = %q, want %q", in, got, want)
+		}
+		if back, err := ParseDuration(FormatDuration(in)); err != nil || back != in {
+			t.Errorf("ParseDuration(FormatDuration(%v)) = %v, %v", in, back, err)
 		}
 	}
 }

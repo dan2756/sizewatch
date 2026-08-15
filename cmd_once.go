@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/dan2756/sizewatch/internal/history"
+	"github.com/dan2756/sizewatch/internal/trigger"
 )
 
 func (a *app) once(ctx context.Context, args []string) error {
@@ -42,6 +43,7 @@ func (a *app) once(ctx context.Context, args []string) error {
 		measure:  mf.options(),
 		triggers: tf.config(),
 		hook:     tf.hook,
+		cooldown: trigger.NewCooldown(0),
 		prev:     history.Latest(samples),
 	}
 	outs, err := m.round(ctx, paths)

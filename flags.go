@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/dan2756/sizewatch/internal/history"
 	"github.com/dan2756/sizewatch/internal/trigger"
@@ -204,4 +205,24 @@ func (v *percentValue) String() string {
 		return ""
 	}
 	return strconv.FormatFloat(float64(*v), 'g', -1, 64)
+}
+
+// durationValue is a flag holding a duration; on top of Go's syntax it
+// accepts days and weeks (30d, 1w).
+type durationValue time.Duration
+
+func (v *durationValue) Set(s string) error {
+	d, err := units.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	*v = durationValue(d)
+	return nil
+}
+
+func (v *durationValue) String() string {
+	if v == nil {
+		return ""
+	}
+	return units.FormatDuration(time.Duration(*v))
 }

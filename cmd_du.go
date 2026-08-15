@@ -42,9 +42,5 @@ func (a *app) warnSkipped(path string, n int64) {
 	if n == 0 {
 		return
 	}
-	noun := "entries"
-	if n == 1 {
-		noun = "entry"
-	}
-	a.errorf("warning: %s: skipped %d unreadable %s", path, n, noun)
+	a.errorf("warning: %s: skipped %d unreadable %s", path, n, plural(n, "entry", "entries"))
 }

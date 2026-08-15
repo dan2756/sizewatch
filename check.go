@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/dan2756/sizewatch/internal/history"
@@ -21,7 +20,8 @@ type monitor struct {
 	store    *history.Store
 	measure  walk.Options
 	triggers trigger.Config
-	hook     string                    // shell command; empty means just report
+	hook     string // shell command; empty means just report
+	cooldown *trigger.Cooldown
 	prev     map[string]history.Sample // latest sample per path
 }
 
@@ -31,6 +31,7 @@ type outcome struct {
 	Prev     *history.Sample // nil for the first sample of a path
 	Warnings int64
 	Reasons  []trigger.Reason // triggers that fired
+	Cooldown bool             // triggered, but the path alerted too recently
 	HookErr  error
 	Err      error // the path could not be measured
 }
@@ -60,9 +61,8 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 		m.prev[p] = o.Sample
 		fresh = append(fresh, o.Sample)
 		o.Reasons = trigger.Evaluate(m.triggers, o.Prev, o.Sample)
-		if len(o.Reasons) > 0 && m.hook != "" {
-			ev := trigger.Event{Cur: o.Sample, Prev: o.Prev, Reasons: o.Reasons}
-			o.HookErr = trigger.RunHook(ctx, m.hook, ev, m.a.stdout, m.a.stderr)
+		if len(o.Reasons) > 0 {
+			m.alert(ctx, &o)
 		}
 		outs = append(outs, o)
 	}
@@ -72,12 +72,28 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 	return outs, nil
 }
 
+// alert runs the hook for a triggered outcome unless the path is cooling
+// down from an earlier alert.
+func (m *monitor) alert(ctx context.Context, o *outcome) {
+	if !m.cooldown.Allow(o.Sample.Path, m.a.now()) {
+		o.Cooldown = true
+		return
+	}
+	if m.hook != "" {
+		ev := trigger.Event{Cur: o.Sample, Prev: o.Prev, Reasons: o.Reasons}
+		o.HookErr = trigger.RunHook(ctx, m.hook, ev, m.a.stdout, m.a.stderr)
+	}
+}
+
+// fired reports whether the outcome alerted (as opposed to being held back).
+func (o outcome) fired() bool { return len(o.Reasons) > 0 && !o.Cooldown }
+
 // report prints one line per path to stdout and problems to stderr. A
 // non-empty stamp is printed first on each line. With quiet, only paths
-// that triggered are listed. It returns false if a path or hook failed.
+// that alerted are listed. It returns false if a path or hook failed.
 func (m *monitor) report(outs []outcome, stamp string, quiet bool) bool {
 	ok := true
-	tw := tabwriter.NewWriter(m.a.stdout, 0, 0, 2, ' ', 0)
+	tbl := newTable(m.a.stdout)
 	for _, o := range outs {
 		if o.Err != nil {
 			m.a.errorf("%v", o.Err)
@@ -89,15 +105,18 @@ func (m *monitor) report(outs []outcome, stamp string, quiet bool) bool {
 			m.a.errorf("%s: %v", o.Sample.Path, o.HookErr)
 			ok = false
 		}
-		if quiet && len(o.Reasons) == 0 {
+		if quiet && !o.fired() {
 			continue
 		}
+		cells := []string{o.Sample.Path, units.FormatSize(o.Sample.Bytes), describeChange(o), describeAlert(o)}
 		if stamp != "" {
-			fmt.Fprintf(tw, "%s\t", stamp)
+			cells = append([]string{stamp}, cells...)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", o.Sample.Path, units.FormatSize(o.Sample.Bytes), describeChange(o), describeAlert(o))
+		tbl.row(cells...)
 	}
-	tw.Flush()
+	if err := tbl.flush(); err != nil {
+		return false
+	}
 	return ok
 }
 
@@ -116,11 +135,15 @@ func describeAlert(o outcome) string {
 	for i, r := range o.Reasons {
 		parts[i] = string(r)
 	}
-	note := "ALERT " + strings.Join(parts, ",")
-	if o.HookErr != nil {
-		note += " (hook failed)"
+	list := strings.Join(parts, ",")
+	switch {
+	case o.Cooldown:
+		return list + " (cooldown)"
+	case o.HookErr != nil:
+		return "ALERT " + list + " (hook failed)"
+	default:
+		return "ALERT " + list
 	}
-	return note
 }
 
 // formatSpan renders a duration coarsely: 45s, 12m, 5h, 3d.

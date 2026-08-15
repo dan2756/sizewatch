@@ -1,6 +1,6 @@
-// Package units parses and formats byte sizes.
+// Package units parses and formats byte sizes and durations.
 //
-// Parsing accepts both bases: KB, MB, GB, TB and PB are decimal (powers of
+// Size parsing accepts both bases: KB, MB, GB, TB and PB are decimal (powers of
 // 1000) and KiB, MiB, GiB, TiB and PiB are binary (powers of 1024).
 // Formatting always uses decimal units, so 1 GB = 1,000,000,000 bytes.
 package units
@@ -10,6 +10,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var sizeUnits = map[string]float64{
@@ -79,4 +80,66 @@ func FormatDelta(n int64) string {
 		return FormatSize(n)
 	}
 	return "+" + FormatSize(n)
+}
+
+const (
+	day  = 24 * time.Hour
+	week = 7 * day
+)
+
+// ParseDuration is time.ParseDuration plus the units d (24h) and w (7d),
+// which may lead the value: "90s", "5m", "1h30m", "30d", "1w", "1d12h".
+// Negative durations are rejected.
+func ParseDuration(s string) (time.Duration, error) {
+	t := strings.TrimSpace(s)
+	bad := fmt.Errorf("invalid duration %q (examples: 90s, 5m, 12h, 30d, 1w)", s)
+	if t == "" || strings.ContainsAny(t, "+-") {
+		return 0, bad
+	}
+	var total time.Duration
+	rest := t
+	for _, u := range []struct {
+		suffix byte
+		unit   time.Duration
+	}{{'w', week}, {'d', day}} {
+		i := 0
+		for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		if i == 0 || i == len(rest) || rest[i] != u.suffix {
+			continue
+		}
+		n, err := strconv.ParseInt(rest[:i], 10, 64)
+		if err != nil || n > int64(math.MaxInt64/u.unit) {
+			return 0, bad
+		}
+		total += time.Duration(n) * u.unit
+		rest = rest[i+1:]
+	}
+	if rest != "" {
+		d, err := time.ParseDuration(rest)
+		if err != nil {
+			return 0, bad
+		}
+		total += d
+	}
+	return total, nil
+}
+
+// FormatDuration renders d compactly: "0", "90s", "5m", "1h30m", "30d".
+func FormatDuration(d time.Duration) string {
+	if d == 0 {
+		return "0"
+	}
+	if d%day == 0 {
+		return strconv.FormatInt(int64(d/day), 10) + "d"
+	}
+	s := d.String()
+	if strings.HasSuffix(s, "m0s") {
+		s = strings.TrimSuffix(s, "0s")
+	}
+	if strings.HasSuffix(s, "h0m") {
+		s = strings.TrimSuffix(s, "0m")
+	}
+	return s
 }

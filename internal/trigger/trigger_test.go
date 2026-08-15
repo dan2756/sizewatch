@@ -125,3 +125,33 @@ func TestRunHookFailure(t *testing.T) {
 		t.Errorf("err = %v, want exit status 3", err)
 	}
 }
+
+func TestCooldown(t *testing.T) {
+	c := NewCooldown(30 * time.Minute)
+	steps := []struct {
+		path  string
+		after time.Duration
+		want  bool
+	}{
+		{"/a", 0, true},
+		{"/a", 5 * time.Minute, false},
+		{"/b", 5 * time.Minute, true}, // per path
+		{"/a", 29 * time.Minute, false},
+		{"/a", 30 * time.Minute, true}, // period over: alerts and restarts it
+		{"/a", 45 * time.Minute, false},
+		{"/b", 34 * time.Minute, false},
+		{"/b", 35 * time.Minute, true},
+	}
+	for _, s := range steps {
+		if got := c.Allow(s.path, t0.Add(s.after)); got != s.want {
+			t.Errorf("Allow(%s, +%v) = %v, want %v", s.path, s.after, got, s.want)
+		}
+	}
+
+	off := NewCooldown(0)
+	for i := range 3 {
+		if !off.Allow("/a", t0.Add(time.Duration(i)*time.Second)) {
+			t.Errorf("zero cooldown held back alert %d", i)
+		}
+	}
+}
