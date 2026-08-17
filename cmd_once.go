@@ -18,6 +18,7 @@ func (a *app) once(ctx context.Context, args []string) error {
 	var hf historyFlags
 	hf.register(fs)
 	quiet := fs.Bool("quiet", false, "print only alerts and problems")
+	jsonOut := fs.Bool("json", false, "print the samples and alerts as JSON")
 	paths, err := a.parseArgs(fs, args)
 	if err != nil {
 		return err
@@ -43,11 +44,22 @@ func (a *app) once(ctx context.Context, args []string) error {
 		measure:  mf.options(),
 		triggers: tf.config(),
 		hook:     tf.hook,
+		hookOut:  a.stdout,
 		cooldown: trigger.NewCooldown(0),
 		prev:     history.Latest(samples),
 	}
+	if *jsonOut {
+		m.hookOut = a.stderr // keep stdout valid JSON
+	}
 	outs, err := m.round(ctx, paths)
-	ok := m.report(outs, "", *quiet)
+	ok := m.problems(outs)
+	if *jsonOut {
+		if jerr := a.writeJSON(outcomesJSON(outs)); jerr != nil {
+			return jerr
+		}
+	} else if terr := m.table(outs, "", *quiet); terr != nil {
+		return terr
+	}
 	if err != nil {
 		return err
 	}

@@ -27,7 +27,8 @@ const usage = `sizewatch - tracks folder growth and runs a hook on spikes
 Usage:
   sizewatch watch PATH... [flags]     sample every --interval, alert on growth
   sizewatch once PATH... [flags]      take one sample and compare with the last
-  sizewatch du PATH...                print the disk usage of each path
+  sizewatch report [PATH...] [flags]  show sizes, recent change and a trend line
+  sizewatch du PATH... [flags]        print the disk usage of each path
 
 Run 'sizewatch COMMAND -h' for the flags of a command.
 
@@ -47,9 +48,10 @@ type app struct {
 type command func(a *app, ctx context.Context, args []string) error
 
 var commands = map[string]command{
-	"watch": (*app).watch,
-	"once":  (*app).once,
-	"du":    (*app).du,
+	"watch":  (*app).watch,
+	"once":   (*app).once,
+	"report": (*app).report,
+	"du":     (*app).du,
 }
 
 func main() {

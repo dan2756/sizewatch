@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -20,7 +21,8 @@ type monitor struct {
 	store    *history.Store
 	measure  walk.Options
 	triggers trigger.Config
-	hook     string // shell command; empty means just report
+	hook     string    // shell command; empty means just report
+	hookOut  io.Writer // where the hook's stdout goes
 	cooldown *trigger.Cooldown
 	prev     map[string]history.Sample // latest sample per path
 }
@@ -81,19 +83,17 @@ func (m *monitor) alert(ctx context.Context, o *outcome) {
 	}
 	if m.hook != "" {
 		ev := trigger.Event{Cur: o.Sample, Prev: o.Prev, Reasons: o.Reasons}
-		o.HookErr = trigger.RunHook(ctx, m.hook, ev, m.a.stdout, m.a.stderr)
+		o.HookErr = trigger.RunHook(ctx, m.hook, ev, m.hookOut, m.a.stderr)
 	}
 }
 
 // fired reports whether the outcome alerted (as opposed to being held back).
 func (o outcome) fired() bool { return len(o.Reasons) > 0 && !o.Cooldown }
 
-// report prints one line per path to stdout and problems to stderr. A
-// non-empty stamp is printed first on each line. With quiet, only paths
-// that alerted are listed. It returns false if a path or hook failed.
-func (m *monitor) report(outs []outcome, stamp string, quiet bool) bool {
+// problems prints errors and warnings to stderr and returns false if a
+// path could not be measured or a hook failed.
+func (m *monitor) problems(outs []outcome) bool {
 	ok := true
-	tbl := newTable(m.a.stdout)
 	for _, o := range outs {
 		if o.Err != nil {
 			m.a.errorf("%v", o.Err)
@@ -105,7 +105,16 @@ func (m *monitor) report(outs []outcome, stamp string, quiet bool) bool {
 			m.a.errorf("%s: %v", o.Sample.Path, o.HookErr)
 			ok = false
 		}
-		if quiet && !o.fired() {
+	}
+	return ok
+}
+
+// table prints one line per measured path. A non-empty stamp starts each
+// line. With quiet, only paths that alerted are listed.
+func (m *monitor) table(outs []outcome, stamp string, quiet bool) error {
+	tbl := newTable(m.a.stdout)
+	for _, o := range outs {
+		if o.Err != nil || quiet && !o.fired() {
 			continue
 		}
 		cells := []string{o.Sample.Path, units.FormatSize(o.Sample.Bytes), describeChange(o), describeAlert(o)}
@@ -114,10 +123,54 @@ func (m *monitor) report(outs []outcome, stamp string, quiet bool) bool {
 		}
 		tbl.row(cells...)
 	}
-	if err := tbl.flush(); err != nil {
-		return false
+	return tbl.flush()
+}
+
+type outcomeJSON struct {
+	Time       time.Time        `json:"time"`
+	Path       string           `json:"path"`
+	Bytes      int64            `json:"bytes"`
+	Files      int64            `json:"files"`
+	PrevTime   *time.Time       `json:"prev_time"`
+	PrevBytes  *int64           `json:"prev_bytes"`
+	DeltaBytes int64            `json:"delta_bytes"`
+	Warnings   int64            `json:"warnings"`
+	Reasons    []trigger.Reason `json:"reasons"`
+	Alert      string           `json:"alert,omitempty"` // "fired" or "cooldown"
+	HookError  string           `json:"hook_error,omitempty"`
+	Error      string           `json:"error,omitempty"`
+}
+
+func outcomesJSON(outs []outcome) []outcomeJSON {
+	list := make([]outcomeJSON, 0, len(outs))
+	for _, o := range outs {
+		j := outcomeJSON{
+			Time:     o.Sample.Time,
+			Path:     o.Sample.Path,
+			Bytes:    o.Sample.Bytes,
+			Files:    o.Sample.Files,
+			Warnings: o.Warnings,
+			Reasons:  append([]trigger.Reason{}, o.Reasons...),
+		}
+		if o.Prev != nil {
+			j.PrevTime, j.PrevBytes = &o.Prev.Time, &o.Prev.Bytes
+			j.DeltaBytes = o.Sample.Bytes - o.Prev.Bytes
+		}
+		switch {
+		case o.Cooldown:
+			j.Alert = "cooldown"
+		case o.fired():
+			j.Alert = "fired"
+		}
+		if o.HookErr != nil {
+			j.HookError = o.HookErr.Error()
+		}
+		if o.Err != nil {
+			j.Error = o.Err.Error()
+		}
+		list = append(list, j)
 	}
-	return ok
+	return list
 }
 
 func describeChange(o outcome) string {

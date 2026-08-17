@@ -59,6 +59,7 @@ func (a *app) watch(ctx context.Context, args []string) error {
 		measure:  mf.options(),
 		triggers: tf.config(),
 		hook:     tf.hook,
+		hookOut:  a.stdout,
 		cooldown: trigger.NewCooldown(time.Duration(cooldown)),
 		prev:     history.Latest(samples),
 	}
@@ -74,7 +75,10 @@ func (a *app) watch(ctx context.Context, args []string) error {
 		if ctx.Err() != nil {
 			return nil
 		}
-		m.report(outs, a.now().Format("2006-01-02 15:04:05"), *quiet)
+		m.problems(outs)
+		if terr := m.table(outs, a.now().Format("2006-01-02 15:04:05"), *quiet); terr != nil {
+			return terr
+		}
 		if err != nil {
 			// Most likely a full or read-only disk; keep watching.
 			a.errorf("%v", err)

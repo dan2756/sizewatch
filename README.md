@@ -45,6 +45,17 @@ sizewatch once ~/Downloads ./node_modules
 /Users/dj/proj/node_modules  412.0 MB  first sample
 ```
 
+`sizewatch report` shows what the history knows: the latest size, the change
+over the last hour, day and week, and a sparkline of recent samples.
+
+```
+PATH                         SIZE      FILES  1H        24H        7D        UPDATED  TREND
+/Users/dj/Downloads          11.8 GB   3191   +55.0 MB  +360.0 MB  +2.5 GB   4m ago   ▁▁▂▂▂▃▃▃▃▄▄▄▅▅▅▆▆▆▆▇▇▇██
+/Users/dj/proj/node_modules  490.0 MB  40000  +0 B      +0 B       +90.0 MB  4m ago   ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+```
+
+`report`, `once` and `du` accept `--json` for scripts.
+
 Both `watch` and `once` take triggers and a hook. `--spike SIZE` fires on
 growth since the previous sample, `--spike-pct N` on percentage growth and
 `--max SIZE` when a folder reaches a ceiling. The hook runs with `sh -c` and
