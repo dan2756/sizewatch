@@ -3,18 +3,32 @@ package walk
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
+	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
 
 // Options controls how a tree is measured.
 type Options struct {
-	// Apparent counts file sizes (st_size) instead of allocated disk
-	// blocks. Sparse files then count in full and small files count less.
+	// Apparent counts the sizes of regular files and symlinks (st_size)
+	// instead of allocated disk blocks. Sparse files then count in full,
+	// small files count less and directories count nothing.
 	Apparent bool
+	// Exclude holds glob patterns (path.Match syntax) of entries to skip.
+	// A pattern without a slash is matched against each entry's name, so
+	// "*.tmp" or "node_modules" match at any depth. A pattern with a slash
+	// is matched against the slash-separated path relative to the root,
+	// e.g. "build/cache" or "*/node_modules".
+	Exclude []string
+	// OneFileSystem skips directories on a different device than the
+	// root, like du -x.
+	OneFileSystem bool
 	// Workers bounds how many goroutines walk the tree at once.
 	// Zero or less means DefaultWorkers().
 	Workers int
@@ -48,6 +62,7 @@ type counts struct{ bytes, files, dirs, warnings int64 }
 type walker struct {
 	ctx  context.Context
 	root string
+	dev  uint64 // device of root, for OneFileSystem
 	opts Options
 	sem  chan struct{} // one token per running walk goroutine
 	wg   sync.WaitGroup
@@ -72,6 +87,11 @@ func Measure(ctx context.Context, root string, opts Options) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	for _, pat := range opts.Exclude {
+		if err := ValidatePattern(pat); err != nil {
+			return res, err
+		}
+	}
 	if opts.Workers <= 0 {
 		opts.Workers = DefaultWorkers()
 	}
@@ -81,6 +101,17 @@ func Measure(ctx context.Context, root string, opts Options) (Result, error) {
 		opts: opts,
 		sem:  make(chan struct{}, opts.Workers),
 		seen: make(map[fileID]struct{}),
+	}
+	if opts.OneFileSystem {
+		fi, err := os.Lstat(start)
+		if err != nil {
+			return res, err
+		}
+		if st, ok := statOf(fi); ok {
+			w.dev = st.dev
+		} else {
+			w.opts.OneFileSystem = false // no device numbers to compare
+		}
 	}
 	w.sem <- struct{}{}
 	w.wg.Add(1)
@@ -124,6 +155,13 @@ func (w *walker) walk(dir string) {
 			c.warnings++
 			return nil
 		}
+		// The start of a spawned walk was already vetted by its parent.
+		if path != dir && w.excluded(path, d.Name()) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil {
 			c.warnings++
@@ -131,6 +169,9 @@ func (w *walker) walk(dir string) {
 		}
 		st, hasStat := statOf(info)
 		if d.IsDir() {
+			if path != dir && w.opts.OneFileSystem && hasStat && st.dev != w.dev {
+				return filepath.SkipDir
+			}
 			if path != dir && w.spawn(path) {
 				return filepath.SkipDir
 			}
@@ -147,6 +188,42 @@ func (w *walker) walk(dir string) {
 	})
 }
 
+// excluded reports whether an entry matches one of the exclude patterns.
+func (w *walker) excluded(p, name string) bool {
+	var rel string
+	for _, pat := range w.opts.Exclude {
+		pat = strings.TrimSuffix(strings.TrimPrefix(pat, "./"), "/")
+		if !strings.Contains(pat, "/") {
+			if ok, _ := path.Match(pat, name); ok {
+				return true
+			}
+			continue
+		}
+		if rel == "" {
+			r, err := filepath.Rel(w.root, p)
+			if err != nil {
+				continue
+			}
+			rel = filepath.ToSlash(r)
+		}
+		if ok, _ := path.Match(pat, rel); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidatePattern reports whether pat is a usable exclude pattern.
+func ValidatePattern(pat string) error {
+	if strings.TrimSuffix(strings.TrimPrefix(pat, "./"), "/") == "" {
+		return fmt.Errorf("empty exclude pattern %q", pat)
+	}
+	if _, err := path.Match(pat, ""); err != nil {
+		return fmt.Errorf("bad exclude pattern %q: %w", pat, err)
+	}
+	return nil
+}
+
 // spawn starts a goroutine walking dir if the pool has room.
 func (w *walker) spawn(dir string) bool {
 	select {
@@ -161,7 +238,12 @@ func (w *walker) spawn(dir string) bool {
 
 func (w *walker) size(info fs.FileInfo, st stat, hasStat bool) int64 {
 	if w.opts.Apparent || !hasStat {
-		return info.Size()
+		// Like du --apparent-size: the st_size of directories and devices
+		// is filesystem-specific bookkeeping, not data.
+		if info.Mode().IsRegular() || info.Mode()&fs.ModeSymlink != 0 {
+			return info.Size()
+		}
+		return 0
 	}
 	return st.blocks * 512
 }

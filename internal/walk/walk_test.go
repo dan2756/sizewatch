@@ -38,7 +38,7 @@ func symlink(t *testing.T, target, name string) {
 	}
 }
 
-// lsize is the apparent size of path itself, without following symlinks.
+// lsize is the size of path itself, without following symlinks.
 func lsize(t *testing.T, path string) int64 {
 	t.Helper()
 	fi, err := os.Lstat(path)
@@ -78,10 +78,8 @@ func TestMeasureLinks(t *testing.T) {
 	symlink(t, outside, links[1])
 	symlink(t, "a.txt", links[2])
 
+	// Apparent mode counts regular files and the symlinks themselves.
 	want := int64(1000 + 5000 + 300)
-	for _, p := range []string{root, filepath.Join(root, "sub"), filepath.Join(root, "sub", "deep")} {
-		want += lsize(t, p)
-	}
 	for _, p := range links {
 		want += lsize(t, p)
 	}
@@ -212,5 +210,83 @@ func TestMeasureSkipsUnreadable(t *testing.T) {
 	}
 	if res.Files != 1 {
 		t.Errorf("Files = %d, want 1 (the readable one)", res.Files)
+	}
+}
+
+func TestMeasureExclude(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "keep.txt"), 1000)
+	writeFile(t, filepath.Join(root, "x.tmp"), 2000)
+	writeFile(t, filepath.Join(root, "sub", "y.tmp"), 3000)
+	writeFile(t, filepath.Join(root, "sub", "keep.bin"), 4000)
+	writeFile(t, filepath.Join(root, "sub", "cache", "z"), 5000)
+	writeFile(t, filepath.Join(root, "app", "node_modules", "pkg", "index.js"), 6000)
+	writeFile(t, filepath.Join(root, "app", "main.js"), 7000)
+	writeFile(t, filepath.Join(root, "node_modules", "top.js"), 8000)
+
+	files := func(t *testing.T, exclude ...string) int64 {
+		t.Helper()
+		var total int64
+		for _, workers := range []int{1, 8} {
+			res := measure(t, root, Options{Apparent: true, Exclude: exclude, Workers: workers})
+			if workers > 1 && res.Files != total {
+				t.Errorf("exclude %q: %d files serially but %d concurrently", exclude, total, res.Files)
+			}
+			total = res.Files
+		}
+		return total
+	}
+
+	tests := []struct {
+		exclude []string
+		want    int64
+	}{
+		{nil, 8},
+		{[]string{"*.tmp"}, 6},
+		{[]string{"sub"}, 5},
+		{[]string{"cache"}, 7},
+		{[]string{"node_modules"}, 6},
+		{[]string{"sub/cache"}, 7},
+		{[]string{"./sub/cache/"}, 7},
+		{[]string{"*/node_modules"}, 7},
+		{[]string{"*.tmp", "node_modules", "sub/cache"}, 3},
+		{[]string{"nothing-matches"}, 8},
+	}
+	for _, tt := range tests {
+		if got := files(t, tt.exclude...); got != tt.want {
+			t.Errorf("exclude %q: %d files, want %d", tt.exclude, got, tt.want)
+		}
+	}
+
+	// Excluding by name never excludes the root itself.
+	if got := measure(t, root, Options{Exclude: []string{filepath.Base(root)}}).Files; got != 8 {
+		t.Errorf("excluding the root's own name: %d files, want 8", got)
+	}
+}
+
+func TestValidatePattern(t *testing.T) {
+	for _, pat := range []string{"*.tmp", "node_modules", "a/b/*", "[abc]?"} {
+		if err := ValidatePattern(pat); err != nil {
+			t.Errorf("ValidatePattern(%q) = %v", pat, err)
+		}
+	}
+	for _, pat := range []string{"", "/", "[", "a/[b"} {
+		if err := ValidatePattern(pat); err == nil {
+			t.Errorf("ValidatePattern(%q) accepted", pat)
+		}
+	}
+	if _, err := Measure(context.Background(), t.TempDir(), Options{Exclude: []string{"["}}); err == nil {
+		t.Error("Measure accepted a bad pattern")
+	}
+}
+
+func TestMeasureOneFileSystemSameDevice(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "a", "b", "c"), 500)
+	writeFile(t, filepath.Join(root, "d"), 500)
+	all := measure(t, root, Options{Apparent: true})
+	same := measure(t, root, Options{Apparent: true, OneFileSystem: true})
+	if all != same {
+		t.Errorf("--one-file-system changed a single-device tree: %+v vs %+v", same, all)
 	}
 }

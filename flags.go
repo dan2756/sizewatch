@@ -100,16 +100,25 @@ func printFlags(w io.Writer, fs *flag.FlagSet) {
 // measureFlags are the walker options shared by du, once and watch.
 type measureFlags struct {
 	apparent bool
+	exclude  patternList
+	oneFS    bool
 	workers  int
 }
 
 func (m *measureFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&m.apparent, "apparent", false, "count apparent file sizes instead of allocated disk usage")
+	fs.Var(&m.exclude, "exclude", "skip entries matching `GLOB` (by name, or by relative path if it has a slash; repeatable)")
+	fs.BoolVar(&m.oneFS, "one-file-system", false, "don't descend into directories on other file systems")
 	fs.IntVar(&m.workers, "workers", 0, "concurrent directory walkers (0 picks a default from the CPU count)")
 }
 
 func (m *measureFlags) options() walk.Options {
-	return walk.Options{Apparent: m.apparent, Workers: m.workers}
+	return walk.Options{
+		Apparent:      m.apparent,
+		Exclude:       m.exclude,
+		OneFileSystem: m.oneFS,
+		Workers:       m.workers,
+	}
 }
 
 // triggerFlags configure alerts for once and watch.
@@ -225,4 +234,22 @@ func (v *durationValue) String() string {
 		return ""
 	}
 	return units.FormatDuration(time.Duration(*v))
+}
+
+// patternList is a repeatable flag of exclude globs.
+type patternList []string
+
+func (p *patternList) Set(s string) error {
+	if err := walk.ValidatePattern(s); err != nil {
+		return err
+	}
+	*p = append(*p, s)
+	return nil
+}
+
+func (p *patternList) String() string {
+	if p == nil {
+		return ""
+	}
+	return strings.Join(*p, ", ")
 }

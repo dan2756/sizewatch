@@ -72,7 +72,11 @@ Samples are appended to `$XDG_STATE_HOME/sizewatch/history.jsonl` (default
 
 Sizes are allocated disk usage (like `du`), in decimal units (1 GB = 10^9
 bytes). Pass `--apparent` to sum file sizes instead. Hard-linked files are
-counted once and symlinks are never followed.
+counted once and symlinks are never followed. `--exclude GLOB` (repeatable)
+skips matching entries: a pattern without a slash matches names at any depth
+(`--exclude '*.tmp' --exclude .git`), one with a slash matches the path
+relative to the measured folder (`--exclude 'build/cache'`).
+`--one-file-system` stays on the folder's device, like `du -x`.
 
 ## License
 
