@@ -1,4 +1,4 @@
-// Package units parses and formats byte sizes and durations.
+// Package units parses and formats byte sizes, growth rates and durations.
 //
 // Size parsing accepts both bases: KB, MB, GB, TB and PB are decimal (powers of
 // 1000) and KiB, MiB, GiB, TiB and PiB are binary (powers of 1024).
@@ -142,4 +142,51 @@ func FormatDuration(d time.Duration) string {
 		s = strings.TrimSuffix(s, "0m")
 	}
 	return s
+}
+
+// ParseRate parses a growth rate written as SIZE/PERIOD, such as "1GB/h",
+// "500MB/day", "10MiB/min" or "2GB/30m", and returns bytes per second.
+// PERIOD is a unit (s, min, h, d, w and their long forms) or a duration.
+func ParseRate(s string) (float64, error) {
+	size, per, ok := strings.Cut(s, "/")
+	if !ok {
+		return 0, fmt.Errorf("invalid rate %q: want SIZE/PERIOD, e.g. 1GB/h", s)
+	}
+	n, err := ParseSize(size)
+	if err != nil {
+		return 0, fmt.Errorf("invalid rate %q: %w", s, err)
+	}
+	d, err := parsePeriod(per)
+	if err != nil {
+		return 0, fmt.Errorf("invalid rate %q: %w", s, err)
+	}
+	return float64(n) / d.Seconds(), nil
+}
+
+func parsePeriod(s string) (time.Duration, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "s", "sec", "second":
+		return time.Second, nil
+	case "m", "min", "minute":
+		return time.Minute, nil
+	case "h", "hr", "hour":
+		return time.Hour, nil
+	case "d", "day":
+		return day, nil
+	case "w", "wk", "week":
+		return week, nil
+	}
+	d, err := ParseDuration(s)
+	if err != nil {
+		return 0, err
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("period must be positive")
+	}
+	return d, nil
+}
+
+// FormatRate renders bytes per second as growth per hour, e.g. "1.2 GB/h".
+func FormatRate(bytesPerSec float64) string {
+	return FormatSize(int64(math.Round(bytesPerSec*3600))) + "/h"
 }

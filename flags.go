@@ -125,6 +125,7 @@ func (m *measureFlags) options() walk.Options {
 type triggerFlags struct {
 	spike sizeValue
 	pct   percentValue
+	rate  rateValue
 	max   sizeValue
 	hook  string
 }
@@ -132,12 +133,18 @@ type triggerFlags struct {
 func (t *triggerFlags) register(fs *flag.FlagSet) {
 	fs.Var(&t.spike, "spike", "alert when a path grows by `SIZE` since the previous sample (e.g. 500MB)")
 	fs.Var(&t.pct, "spike-pct", "alert when a path grows by `PERCENT` since the previous sample")
+	fs.Var(&t.rate, "rate", "alert when a path grows faster than `RATE` between samples (e.g. 1GB/h)")
 	fs.Var(&t.max, "max", "alert when a path is at least `SIZE` (e.g. 10GB)")
 	fs.StringVar(&t.hook, "hook", "", "run `COMMAND` with sh -c when an alert fires (see SIZEWATCH_* variables)")
 }
 
 func (t *triggerFlags) config() trigger.Config {
-	return trigger.Config{Spike: int64(t.spike), SpikePct: float64(t.pct), Max: int64(t.max)}
+	return trigger.Config{
+		Spike:    int64(t.spike),
+		SpikePct: float64(t.pct),
+		Rate:     float64(t.rate),
+		Max:      int64(t.max),
+	}
 }
 
 // historyFlags locate the history file.
@@ -214,6 +221,28 @@ func (v *percentValue) String() string {
 		return ""
 	}
 	return strconv.FormatFloat(float64(*v), 'g', -1, 64)
+}
+
+// rateValue is a flag holding a growth rate like 1GB/h, in bytes per second.
+type rateValue float64
+
+func (v *rateValue) Set(s string) error {
+	r, err := units.ParseRate(s)
+	if err != nil {
+		return err
+	}
+	if r <= 0 {
+		return fmt.Errorf("invalid rate %q: must be positive", s)
+	}
+	*v = rateValue(r)
+	return nil
+}
+
+func (v *rateValue) String() string {
+	if v == nil || *v == 0 {
+		return ""
+	}
+	return units.FormatRate(float64(*v))
 }
 
 // durationValue is a flag holding a duration; on top of Go's syntax it

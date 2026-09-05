@@ -143,3 +143,40 @@ func TestFormatDuration(t *testing.T) {
 		}
 	}
 }
+
+func TestParseRate(t *testing.T) {
+	tests := []struct {
+		in   string
+		want float64 // bytes per hour, to keep the table readable
+	}{
+		{"1GB/h", 1e9},
+		{"1GB/hour", 1e9},
+		{"1 GB / h", 1e9},
+		{"500MB/day", 500e6 / 24},
+		{"10MiB/min", 10 * (1 << 20) * 60},
+		{"1KB/s", 1000 * 3600},
+		{"2GB/30m", 4e9},
+		{"7GB/w", 7e9 / (7 * 24)},
+		{"3GB/3h", 1e9},
+	}
+	for _, tt := range tests {
+		got, err := ParseRate(tt.in)
+		if err != nil || math.Abs(got*3600-tt.want) > 1e-6*tt.want {
+			t.Errorf("ParseRate(%q) = %v B/h, %v; want %v", tt.in, got*3600, err, tt.want)
+		}
+	}
+	for _, in := range []string{"", "1GB", "1GB/", "/h", "1GB/0s", "1GB/fortnight", "lots/h"} {
+		if got, err := ParseRate(in); err == nil {
+			t.Errorf("ParseRate(%q) = %v, want error", in, got)
+		}
+	}
+}
+
+func TestFormatRate(t *testing.T) {
+	if got := FormatRate(1e9 / 3600); got != "1.0 GB/h" {
+		t.Errorf("FormatRate(1GB/h) = %q", got)
+	}
+	if got := FormatRate(0); got != "0 B/h" {
+		t.Errorf("FormatRate(0) = %q", got)
+	}
+}

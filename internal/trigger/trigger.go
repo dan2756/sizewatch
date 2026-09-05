@@ -13,6 +13,7 @@ type Reason string
 const (
 	Spike Reason = "spike" // grew by at least Config.Spike bytes
 	Pct   Reason = "pct"   // grew by at least Config.SpikePct percent
+	Rate  Reason = "rate"  // grew at least Config.Rate bytes per second
 	Max   Reason = "max"   // is at least Config.Max bytes
 )
 
@@ -21,16 +22,17 @@ const (
 type Config struct {
 	Spike    int64   // growth in bytes since the previous sample
 	SpikePct float64 // growth in percent since the previous sample
+	Rate     float64 // growth in bytes per second since the previous sample
 	Max      int64   // absolute ceiling in bytes
 }
 
 // Enabled reports whether any trigger is set.
 func (c Config) Enabled() bool {
-	return c.Spike > 0 || c.SpikePct > 0 || c.Max > 0
+	return c.Spike > 0 || c.SpikePct > 0 || c.Rate > 0 || c.Max > 0
 }
 
 // Evaluate returns the triggers that fire for cur, in the order spike, pct,
-// max. prev is the previous sample of the same path, or nil if there is
+// rate, max. prev is the previous sample of the same path, or nil if there is
 // none, in which case only max can fire. Shrinking never fires growth
 // triggers.
 func Evaluate(c Config, prev *history.Sample, cur history.Sample) []Reason {
@@ -42,6 +44,12 @@ func Evaluate(c Config, prev *history.Sample, cur history.Sample) []Reason {
 			}
 			if c.SpikePct > 0 && float64(delta)*100/float64(prev.Bytes) >= c.SpikePct {
 				out = append(out, Pct)
+			}
+			// Rate divides by the actual time between the samples, so it
+			// means the same thing whatever the sampling interval.
+			if elapsed := cur.Time.Sub(prev.Time); c.Rate > 0 && elapsed > 0 &&
+				float64(delta)/elapsed.Seconds() >= c.Rate {
+				out = append(out, Rate)
 			}
 		}
 	}

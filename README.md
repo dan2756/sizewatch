@@ -57,11 +57,12 @@ PATH                         SIZE      FILES  1H        24H        7D        UPD
 `report`, `once` and `du` accept `--json` for scripts.
 
 Both `watch` and `once` take triggers and a hook. `--spike SIZE` fires on
-growth since the previous sample, `--spike-pct N` on percentage growth and
+growth since the previous sample, `--spike-pct N` on percentage growth,
+`--rate SIZE/PERIOD` (e.g. `1GB/h`) on growth speed between samples and
 `--max SIZE` when a folder reaches a ceiling. The hook runs with `sh -c` and
-gets `SIZEWATCH_PATH`, `SIZEWATCH_BYTES`,
-`SIZEWATCH_PREV_BYTES`, `SIZEWATCH_DELTA_BYTES`, `SIZEWATCH_DELTA_HUMAN` and
-`SIZEWATCH_REASON` (`spike`, `pct` or `max`) in its environment.
+gets `SIZEWATCH_PATH`, `SIZEWATCH_BYTES`, `SIZEWATCH_PREV_BYTES`,
+`SIZEWATCH_DELTA_BYTES`, `SIZEWATCH_DELTA_HUMAN` and `SIZEWATCH_REASON`
+(`spike`, `pct`, `rate` or `max`) in its environment.
 
 Sizes accept decimal units (KB, MB, GB, TB = powers of 1000) and binary
 units (KiB, MiB, GiB, TiB = powers of 1024).
