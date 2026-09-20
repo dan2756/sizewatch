@@ -147,13 +147,20 @@ func (t *triggerFlags) config() trigger.Config {
 	}
 }
 
-// historyFlags locate the history file.
+// historyFlags locate the history file and, for commands that write to it,
+// bound its size.
 type historyFlags struct {
 	file string
+	keep durationValue
 }
 
 func (h *historyFlags) register(fs *flag.FlagSet) {
 	fs.StringVar(&h.file, "history", "", "history `FILE` (default $SIZEWATCH_HISTORY, else $XDG_STATE_HOME/sizewatch/history.jsonl)")
+}
+
+func (h *historyFlags) registerKeep(fs *flag.FlagSet) {
+	h.keep = durationValue(30 * 24 * time.Hour)
+	fs.Var(&h.keep, "keep", "drop samples older than `DURATION` from the history; 0 keeps everything")
 }
 
 func (h *historyFlags) open() (*history.Store, error) {

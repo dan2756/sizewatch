@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dan2756/sizewatch/internal/history"
 )
 
 // cli runs sizewatch in-process with a fixed clock.
@@ -182,5 +184,32 @@ func TestExitCodes(t *testing.T) {
 		if got := a.run(context.Background(), tt.args); got != tt.code {
 			t.Errorf("sizewatch %q: exit %d, want %d (stderr %q)", tt.args, got, tt.code, errb.String())
 		}
+	}
+}
+
+func TestOnceCompactsHistory(t *testing.T) {
+	c := newCLI(t)
+	dir := t.TempDir()
+	old := history.Open(c.history)
+	var samples []history.Sample
+	for h := 40 * 24; h > 0; h-- {
+		samples = append(samples, history.Sample{Time: c.now.Add(-time.Duration(h) * time.Hour), Path: dir, Bytes: int64(h)})
+	}
+	if err := old.Append(samples...); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, errOut, code := c.run("once", dir, "--quiet", "--keep", "30d"); code != 0 {
+		t.Fatalf("once: exit %d: %s", code, errOut)
+	}
+	got, err := old.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 30*24 + 1; len(got) != want {
+		t.Errorf("history has %d samples after once --keep 30d, want %d", len(got), want)
+	}
+	if oldest := c.now.Sub(got[0].Time); oldest > 30*24*time.Hour {
+		t.Errorf("oldest sample is %v old", oldest)
 	}
 }

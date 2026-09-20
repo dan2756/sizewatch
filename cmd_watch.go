@@ -23,10 +23,11 @@ func (a *app) watch(ctx context.Context, args []string) error {
 	tf.register(fs)
 	var hf historyFlags
 	hf.register(fs)
+	hf.registerKeep(fs)
 	interval := durationValue(5 * time.Minute)
-	fs.Var(&interval, "interval", "time between samples, e.g. 30s, 5m, 1h")
+	fs.Var(&interval, "interval", "`DURATION` between samples, e.g. 30s, 5m, 1h")
 	cooldown := durationValue(30 * time.Minute)
-	fs.Var(&cooldown, "cooldown", "after an alert, hold back further alerts for that path for `DURATION` (0 disables)")
+	fs.Var(&cooldown, "cooldown", "after an alert, hold back alerts for that path for `DURATION`; 0 disables")
 	quiet := fs.Bool("quiet", false, "print only alerts and problems")
 	paths, err := a.parseArgs(fs, args)
 	if err != nil {
@@ -70,10 +71,15 @@ func (a *app) watch(ctx context.Context, args []string) error {
 
 	tick := time.NewTicker(time.Duration(interval))
 	defer tick.Stop()
+	var compacted time.Time
 	for {
 		outs, err := m.round(ctx, paths)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if now := a.now(); now.Sub(compacted) >= time.Hour {
+			m.compact(time.Duration(hf.keep))
+			compacted = now
 		}
 		m.problems(outs)
 		if terr := m.table(outs, a.now().Format("2006-01-02 15:04:05"), *quiet); terr != nil {

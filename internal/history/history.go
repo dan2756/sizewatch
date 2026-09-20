@@ -53,7 +53,8 @@ func Open(path string) *Store { return &Store{path: path} }
 func (s *Store) Path() string { return s.path }
 
 // Append adds samples to the end of the file, creating the file and its
-// directory if needed. The samples go out in a single write.
+// directory if needed. The samples go out in a single write, under the
+// same lock that compaction takes.
 func (s *Store) Append(samples ...Sample) error {
 	if len(samples) == 0 {
 		return nil
@@ -62,9 +63,11 @@ func (s *Store) Append(samples ...Sample) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	unlock, err := s.lock()
+	if err != nil {
 		return err
 	}
+	defer unlock()
 	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return err

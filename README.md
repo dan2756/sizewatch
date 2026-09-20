@@ -70,6 +70,9 @@ units (KiB, MiB, GiB, TiB = powers of 1024).
 Samples are appended to `$XDG_STATE_HOME/sizewatch/history.jsonl` (default
 `~/.local/state/sizewatch/history.jsonl`); set `SIZEWATCH_HISTORY` or pass
 `--history FILE` to use another file.
+`once` and `watch` keep it bounded: samples older than `--keep` (default
+`30d`) are dropped, and samples older than a day are thinned to one per path
+per hour.
 
 Sizes are allocated disk usage (like `du`), in decimal units (1 GB = 10^9
 bytes). Pass `--apparent` to sum file sizes instead. Hard-linked files are

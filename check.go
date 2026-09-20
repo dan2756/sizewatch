@@ -90,6 +90,17 @@ func (m *monitor) alert(ctx context.Context, o *outcome) {
 // fired reports whether the outcome alerted (as opposed to being held back).
 func (o outcome) fired() bool { return len(o.Reasons) > 0 && !o.Cooldown }
 
+// compactMinDrop is how many samples compaction must be able to drop
+// before the history file is rewritten.
+const compactMinDrop = 64
+
+// compact bounds the history; failing to is worth a warning, not an exit.
+func (m *monitor) compact(keep time.Duration) {
+	if _, err := m.store.Compact(m.a.now(), keep, compactMinDrop); err != nil {
+		m.a.errorf("warning: %v", err)
+	}
+}
+
 // problems prints errors and warnings to stderr and returns false if a
 // path could not be measured or a hook failed.
 func (m *monitor) problems(outs []outcome) bool {
