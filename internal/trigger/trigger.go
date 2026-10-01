@@ -42,7 +42,9 @@ func Evaluate(c Config, prev *history.Sample, cur history.Sample) []Reason {
 			if c.Spike > 0 && delta >= c.Spike {
 				out = append(out, Spike)
 			}
-			if c.SpikePct > 0 && float64(delta)*100/float64(prev.Bytes) >= c.SpikePct {
+			// Any growth from nothing is "infinite percent"; that's what
+			// --spike and --max are for, so pct needs a non-empty base.
+			if c.SpikePct > 0 && prev.Bytes > 0 && float64(delta)*100/float64(prev.Bytes) >= c.SpikePct {
 				out = append(out, Pct)
 			}
 			// Rate divides by the actual time between the samples, so it

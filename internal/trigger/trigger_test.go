@@ -41,6 +41,8 @@ func TestEvaluate(t *testing.T) {
 		{"no change", Config{Spike: 1, SpikePct: 1}, ptr(sample(2*gb, 0)), sample(2*gb, 5*time.Minute), nil},
 		{"pct below", Config{SpikePct: 20}, ptr(sample(1*gb, 0)), sample(1*gb+199*mb, 5*time.Minute), nil},
 		{"pct exact", Config{SpikePct: 20}, ptr(sample(1*gb, 0)), sample(1*gb+200*mb, 5*time.Minute), []Reason{Pct}},
+		{"pct from empty", Config{SpikePct: 20}, ptr(sample(0, 0)), sample(4096, 5*time.Minute), nil},
+		{"spike from empty", Config{Spike: 1 * mb, SpikePct: 20}, ptr(sample(0, 0)), sample(2*mb, 5*time.Minute), []Reason{Spike}},
 		{"pct fractional", Config{SpikePct: 0.5}, ptr(sample(1*gb, 0)), sample(1*gb+5*mb, time.Hour), []Reason{Pct}},
 		{"rate below", Config{Rate: gb / 3600}, ptr(sample(1*gb, 0)), sample(1*gb+80*mb, 5*time.Minute), nil},
 		{"rate reached", Config{Rate: gb / 3600}, ptr(sample(1*gb, 0)), sample(1*gb+84*mb, 5*time.Minute), []Reason{Rate}},
