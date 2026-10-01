@@ -21,7 +21,8 @@ sizewatch watch ~/Downloads ./node_modules --interval 5m --spike 500MB \
 
 `watch` samples every `--interval` (default 5m) until interrupted. After an
 alert, a path stays quiet for `--cooldown` (default 30m) so that a folder
-that keeps growing doesn't spam you.
+that keeps growing doesn't spam you. The cooldown is saved next to the
+history, so it also holds across separate `once` runs and watch restarts.
 
 `sizewatch du` just prints sizes:
 

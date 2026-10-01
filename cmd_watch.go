@@ -8,8 +8,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dan2756/sizewatch/internal/history"
-	"github.com/dan2756/sizewatch/internal/trigger"
 	"github.com/dan2756/sizewatch/internal/units"
 )
 
@@ -26,8 +24,6 @@ func (a *app) watch(ctx context.Context, args []string) error {
 	hf.registerKeep(fs)
 	interval := durationValue(5 * time.Minute)
 	fs.Var(&interval, "interval", "`DURATION` between samples, e.g. 30s, 5m, 1h")
-	cooldown := durationValue(30 * time.Minute)
-	fs.Var(&cooldown, "cooldown", "after an alert, hold back alerts for that path for `DURATION`; 0 disables")
 	quiet := fs.Bool("quiet", false, "print only alerts and problems")
 	paths, err := a.parseArgs(fs, args)
 	if err != nil {
@@ -46,27 +42,13 @@ func (a *app) watch(ctx context.Context, args []string) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	store, err := hf.open()
+	m, err := a.newMonitor(&mf, &tf, &hf)
 	if err != nil {
 		return err
-	}
-	samples, err := store.Load()
-	if err != nil {
-		return err
-	}
-	m := &monitor{
-		a:        a,
-		store:    store,
-		measure:  mf.options(),
-		triggers: tf.config(),
-		hook:     tf.hook,
-		hookOut:  a.stdout,
-		cooldown: trigger.NewCooldown(time.Duration(cooldown)),
-		prev:     history.Latest(samples),
 	}
 	if !*quiet {
 		fmt.Fprintf(a.stderr, "sizewatch: watching %d %s every %s, history in %s\n",
-			len(paths), plural(int64(len(paths)), "path", "paths"), units.FormatDuration(time.Duration(interval)), store.Path())
+			len(paths), plural(int64(len(paths)), "path", "paths"), units.FormatDuration(time.Duration(interval)), m.store.Path())
 	}
 
 	tick := time.NewTicker(time.Duration(interval))

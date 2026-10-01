@@ -96,12 +96,44 @@ func TestOnceSpikeRunsHook(t *testing.T) {
 		t.Errorf("hook saw %q, want %q", got, want)
 	}
 
-	// The table output says what happened.
+	// Five minutes later it is still cooling down (default 30m), even
+	// though this is a separate run.
+	if err := os.Remove(hookOut); err != nil {
+		t.Fatal(err)
+	}
 	c.now = c.now.Add(5 * time.Minute)
 	write(t, filepath.Join(dir, "c"), 700_000)
-	out, _, code := c.run("once", dir, "--apparent", "--spike", "500KB")
-	if code != 0 || !strings.Contains(out, "ALERT spike") || !strings.Contains(out, "in 5m") {
-		t.Errorf("once table (exit %d):\n%s", code, out)
+	out, _, code := c.run("once", dir, "--apparent", "--spike", "500KB", "--hook", hook)
+	if code != 0 || !strings.Contains(out, "spike (cooldown)") || !strings.Contains(out, "in 5m") {
+		t.Errorf("once during cooldown (exit %d):\n%s", code, out)
+	}
+	if _, err := os.Stat(hookOut); err == nil {
+		t.Error("hook ran during cooldown")
+	}
+
+	// Once the cooldown is over, it alerts again.
+	c.now = c.now.Add(30 * time.Minute)
+	write(t, filepath.Join(dir, "d"), 700_000)
+	out, _, code = c.run("once", dir, "--apparent", "--spike", "500KB", "--hook", hook)
+	if code != 0 || !strings.Contains(out, "ALERT spike") {
+		t.Errorf("once after cooldown (exit %d):\n%s", code, out)
+	}
+	if _, err := os.Stat(hookOut); err != nil {
+		t.Error("hook did not run after the cooldown")
+	}
+}
+
+func TestOnceCooldownZero(t *testing.T) {
+	c := newCLI(t)
+	dir := t.TempDir()
+	for i := range 3 {
+		write(t, filepath.Join(dir, "f"+string(rune('0'+i))), 2000)
+		var outs []outcomeJSON
+		c.runJSON(&outs, "once", dir, "--apparent", "--max", "1KB", "--cooldown", "0")
+		if outs[0].Alert != "fired" {
+			t.Errorf("run %d: alert = %q, want fired", i, outs[0].Alert)
+		}
+		c.now = c.now.Add(time.Minute)
 	}
 }
 

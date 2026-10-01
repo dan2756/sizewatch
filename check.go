@@ -24,6 +24,7 @@ type monitor struct {
 	hook     string    // shell command; empty means just report
 	hookOut  io.Writer // where the hook's stdout goes
 	cooldown *trigger.Cooldown
+	coolFile string                    // where cooldown state persists between runs
 	prev     map[string]history.Sample // latest sample per path
 }
 
@@ -68,10 +69,42 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 		}
 		outs = append(outs, o)
 	}
+	if err := m.cooldown.Save(m.coolFile, m.a.now()); err != nil {
+		m.a.errorf("warning: saving cooldown state: %v", err)
+	}
 	if err := m.store.Append(fresh...); err != nil {
 		return outs, fmt.Errorf("saving history: %w", err)
 	}
 	return outs, nil
+}
+
+// newMonitor sets up a monitor from the shared flags, loading the latest
+// sample of each path and the cooldown state.
+func (a *app) newMonitor(mf *measureFlags, tf *triggerFlags, hf *historyFlags) (*monitor, error) {
+	store, err := hf.open()
+	if err != nil {
+		return nil, err
+	}
+	samples, err := store.Load()
+	if err != nil {
+		return nil, err
+	}
+	coolFile := cooldownFile(store.Path())
+	cooldown, err := trigger.LoadCooldown(coolFile, time.Duration(tf.cooldown))
+	if err != nil {
+		return nil, err
+	}
+	return &monitor{
+		a:        a,
+		store:    store,
+		measure:  mf.options(),
+		triggers: tf.config(),
+		hook:     tf.hook,
+		hookOut:  a.stdout,
+		cooldown: cooldown,
+		coolFile: coolFile,
+		prev:     history.Latest(samples),
+	}, nil
 }
 
 // alert runs the hook for a triggered outcome unless the path is cooling

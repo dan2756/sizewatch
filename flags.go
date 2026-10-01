@@ -123,11 +123,12 @@ func (m *measureFlags) options() walk.Options {
 
 // triggerFlags configure alerts for once and watch.
 type triggerFlags struct {
-	spike sizeValue
-	pct   percentValue
-	rate  rateValue
-	max   sizeValue
-	hook  string
+	spike    sizeValue
+	pct      percentValue
+	rate     rateValue
+	max      sizeValue
+	hook     string
+	cooldown durationValue
 }
 
 func (t *triggerFlags) register(fs *flag.FlagSet) {
@@ -136,6 +137,8 @@ func (t *triggerFlags) register(fs *flag.FlagSet) {
 	fs.Var(&t.rate, "rate", "alert when a path grows faster than `RATE` between samples (e.g. 1GB/h)")
 	fs.Var(&t.max, "max", "alert when a path is at least `SIZE` (e.g. 10GB)")
 	fs.StringVar(&t.hook, "hook", "", "run `COMMAND` with sh -c when an alert fires (see SIZEWATCH_* variables)")
+	t.cooldown = durationValue(30 * time.Minute)
+	fs.Var(&t.cooldown, "cooldown", "after an alert, hold back alerts for that path for `DURATION`; 0 disables")
 }
 
 func (t *triggerFlags) config() trigger.Config {
@@ -161,6 +164,12 @@ func (h *historyFlags) register(fs *flag.FlagSet) {
 func (h *historyFlags) registerKeep(fs *flag.FlagSet) {
 	h.keep = durationValue(30 * 24 * time.Hour)
 	fs.Var(&h.keep, "keep", "drop samples older than `DURATION` from the history; 0 keeps everything")
+}
+
+// cooldownFile is where alert times are kept between runs: next to the
+// history, so that SIZEWATCH_HISTORY moves both.
+func cooldownFile(historyFile string) string {
+	return strings.TrimSuffix(historyFile, ".jsonl") + ".cooldown.json"
 }
 
 func (h *historyFlags) open() (*history.Store, error) {

@@ -3,9 +3,6 @@ package main
 import (
 	"context"
 	"time"
-
-	"github.com/dan2756/sizewatch/internal/history"
-	"github.com/dan2756/sizewatch/internal/trigger"
 )
 
 func (a *app) once(ctx context.Context, args []string) error {
@@ -32,23 +29,9 @@ func (a *app) once(ctx context.Context, args []string) error {
 		return err
 	}
 
-	store, err := hf.open()
+	m, err := a.newMonitor(&mf, &tf, &hf)
 	if err != nil {
 		return err
-	}
-	samples, err := store.Load()
-	if err != nil {
-		return err
-	}
-	m := &monitor{
-		a:        a,
-		store:    store,
-		measure:  mf.options(),
-		triggers: tf.config(),
-		hook:     tf.hook,
-		hookOut:  a.stdout,
-		cooldown: trigger.NewCooldown(0),
-		prev:     history.Latest(samples),
 	}
 	if *jsonOut {
 		m.hookOut = a.stderr // keep stdout valid JSON

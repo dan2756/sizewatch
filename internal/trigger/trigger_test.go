@@ -160,3 +160,76 @@ func TestCooldown(t *testing.T) {
 		}
 	}
 }
+
+func TestCooldownPersists(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "state", "cooldown.json")
+
+	c, err := LoadCooldown(file, 30*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Save(file, t0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(file); err == nil {
+		t.Fatal("saved although nothing alerted")
+	}
+	if !c.Allow("/a", t0) {
+		t.Fatal("first alert held back")
+	}
+	if err := c.Save(file, t0); err != nil {
+		t.Fatal(err)
+	}
+
+	// A later run (a new process, as with cron) still remembers /a.
+	next, err := LoadCooldown(file, 30*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Allow("/a", t0.Add(10*time.Minute)) {
+		t.Error("cooldown forgotten between runs")
+	}
+	if !next.Allow("/b", t0.Add(10*time.Minute)) {
+		t.Error("unrelated path held back")
+	}
+
+	// Another writer saved meanwhile: both entries survive the merge.
+	other, _ := LoadCooldown(file, 30*time.Minute)
+	other.Allow("/c", t0.Add(11*time.Minute))
+	if err := other.Save(file, t0.Add(11*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if err := next.Save(file, t0.Add(12*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	final, _ := LoadCooldown(file, 30*time.Minute)
+	for _, p := range []string{"/a", "/b", "/c"} {
+		if final.Allow(p, t0.Add(15*time.Minute)) {
+			t.Errorf("%s lost in merge", p)
+		}
+	}
+	if !final.Allow("/a", t0.Add(31*time.Minute)) {
+		t.Error("/a still held back after its period")
+	}
+
+	// Very old entries are pruned on save.
+	final.Allow("/new", t0.Add(40*24*time.Hour))
+	if err := final.Save(file, t0.Add(40*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(file)
+	if strings.Contains(string(data), `"/b"`) || !strings.Contains(string(data), `"/new"`) {
+		t.Errorf("after pruning: %s", data)
+	}
+}
+
+func TestLoadCooldownCorrupt(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "cooldown.json")
+	if err := os.WriteFile(file, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadCooldown(file, time.Hour)
+	if err != nil || !c.Allow("/a", t0) {
+		t.Errorf("corrupt state: %v", err)
+	}
+}
