@@ -20,8 +20,9 @@ const (
 
 var t0 = time.Date(2026, 8, 12, 19, 0, 0, 0, time.UTC)
 
+// sample is a measurement of a folder with a file in it.
 func sample(bytes int64, after time.Duration) history.Sample {
-	return history.Sample{Time: t0.Add(after), Path: "/data", Bytes: bytes}
+	return history.Sample{Time: t0.Add(after), Path: "/data", Bytes: bytes, Files: 1}
 }
 
 func TestEvaluate(t *testing.T) {
@@ -42,6 +43,8 @@ func TestEvaluate(t *testing.T) {
 		{"pct below", Config{SpikePct: 20}, ptr(sample(1*gb, 0)), sample(1*gb+199*mb, 5*time.Minute), nil},
 		{"pct exact", Config{SpikePct: 20}, ptr(sample(1*gb, 0)), sample(1*gb+200*mb, 5*time.Minute), []Reason{Pct}},
 		{"pct from empty", Config{SpikePct: 20}, ptr(sample(0, 0)), sample(4096, 5*time.Minute), nil},
+		// An empty directory still takes a block on ext4 and tmpfs.
+		{"pct from empty dir block", Config{SpikePct: 20}, ptr(history.Sample{Time: t0, Path: "/data", Bytes: 4096}), sample(100_000, 5*time.Minute), nil},
 		{"spike from empty", Config{Spike: 1 * mb, SpikePct: 20}, ptr(sample(0, 0)), sample(2*mb, 5*time.Minute), []Reason{Spike}},
 		{"pct fractional", Config{SpikePct: 0.5}, ptr(sample(1*gb, 0)), sample(1*gb+5*mb, time.Hour), []Reason{Pct}},
 		{"rate below", Config{Rate: gb / 3600}, ptr(sample(1*gb, 0)), sample(1*gb+80*mb, 5*time.Minute), nil},
@@ -125,6 +128,43 @@ func TestRunHook(t *testing.T) {
 	}
 }
 
+// TestRunHookCancelKillsChildren checks that ending the context (watch
+// being stopped) kills what the hook started, not just sh.
+func TestRunHookCancelKillsChildren(t *testing.T) {
+	dir := t.TempDir()
+	started, late := filepath.Join(dir, "started"), filepath.Join(dir, "late")
+	t.Setenv("STARTED", started)
+	t.Setenv("LATE", late)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	ev := Event{Cur: sample(1, 0), Reasons: []Reason{Max}}
+	go func() {
+		done <- RunHook(ctx, `(sleep 1; echo late > "$LATE") & touch "$STARTED"; wait`, ev, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("hook did not start")
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Error("RunHook succeeded although it was cancelled")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunHook did not return after cancel")
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if _, err := os.Stat(late); err == nil {
+		t.Error("a process started by the hook outlived the cancel")
+	}
+}
+
 func TestRunHookFailure(t *testing.T) {
 	ev := Event{Cur: sample(1, 0), Reasons: []Reason{Max}}
 	err := RunHook(context.Background(), "exit 3", ev, &bytes.Buffer{}, &bytes.Buffer{})
@@ -179,8 +219,14 @@ func TestCooldownPersists(t *testing.T) {
 	if !c.Allow("/a", t0) {
 		t.Fatal("first alert held back")
 	}
+	if !c.Unsaved() {
+		t.Error("Unsaved() = false after an alert")
+	}
 	if err := c.Save(file, t0); err != nil {
 		t.Fatal(err)
+	}
+	if c.Unsaved() {
+		t.Error("Unsaved() = true after saving")
 	}
 
 	// A later run (a new process, as with cron) still remembers /a.

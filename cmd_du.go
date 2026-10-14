@@ -38,7 +38,9 @@ func (a *app) du(ctx context.Context, args []string) error {
 			results = append(results, duJSON{Path: p, Bytes: res.Bytes, Files: res.Files, Dirs: res.Dirs, Warnings: res.Warnings})
 			continue
 		}
-		fmt.Fprintf(a.stdout, "%9s  %s\n", units.FormatSize(res.Bytes), p)
+		if _, err := fmt.Fprintf(a.stdout, "%9s  %s\n", units.FormatSize(res.Bytes), p); err != nil {
+			return err
+		}
 	}
 	if *jsonOut {
 		if err := a.writeJSON(results); err != nil {

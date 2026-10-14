@@ -109,7 +109,7 @@ func (m *measureFlags) register(fs *flag.FlagSet) {
 	fs.BoolVar(&m.apparent, "apparent", false, "count apparent file sizes instead of allocated disk usage")
 	fs.Var(&m.exclude, "exclude", "skip entries matching `GLOB` (by name, or by relative path if it has a slash; repeatable)")
 	fs.BoolVar(&m.oneFS, "one-file-system", false, "don't descend into directories on other file systems")
-	fs.IntVar(&m.workers, "workers", 0, "concurrent directory walkers (0 picks a default from the CPU count)")
+	fs.IntVar(&m.workers, "workers", 0, "walk with up to `N` goroutines (0 picks a default from the CPU count)")
 }
 
 func (m *measureFlags) options() walk.Options {
@@ -163,7 +163,7 @@ func (h *historyFlags) register(fs *flag.FlagSet) {
 
 func (h *historyFlags) registerKeep(fs *flag.FlagSet) {
 	h.keep = durationValue(30 * 24 * time.Hour)
-	fs.Var(&h.keep, "keep", "drop samples older than `DURATION` from the history; 0 keeps everything")
+	fs.Var(&h.keep, "keep", "drop samples older than `DURATION` from the history (0 for no limit); samples over a day old are thinned to one per hour")
 }
 
 // cooldownFile is where alert times are kept between runs: next to the

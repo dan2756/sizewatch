@@ -14,9 +14,9 @@ import (
 const ThinAfter = 24 * time.Hour
 
 // Compact returns the samples worth keeping at now. Samples older than keep
-// are dropped (keep <= 0 keeps them all) and samples older than ThinAfter
-// are thinned to the latest one per path per hour. The input is not
-// modified; the result is sorted oldest first.
+// are dropped (keep <= 0 drops none by age) and samples older than ThinAfter
+// are thinned to the latest one per path per hour, whatever keep is. The
+// input is not modified; the result is sorted oldest first.
 func Compact(samples []Sample, now time.Time, keep time.Duration) []Sample {
 	sorted := slices.Clone(samples)
 	sortByTime(sorted)
@@ -50,7 +50,7 @@ func Compact(samples []Sample, now time.Time, keep time.Duration) []Sample {
 // drops at least minDrop samples, so a large history isn't rewritten for
 // the sake of one line. It returns how many samples were dropped.
 func (s *Store) Compact(now time.Time, keep time.Duration, minDrop int) (int, error) {
-	unlock, err := s.lock()
+	unlock, err := s.Lock()
 	if err != nil {
 		return 0, err
 	}
@@ -100,10 +100,12 @@ func (s *Store) rewrite(samples []Sample) error {
 	return os.Rename(tmp.Name(), s.path)
 }
 
-// lock serializes writers, which may be different sizewatch processes (a
+// Lock serializes writers, which may be different sizewatch processes (a
 // watch and a cron job, say), with an advisory lock on a side file. The
 // history file can't hold the lock itself because compaction replaces it.
-func (s *Store) lock() (unlock func(), err error) {
+// Append and Compact take it; callers take it to update other state kept
+// next to the history. It is not reentrant.
+func (s *Store) Lock() (unlock func(), err error) {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
 		return nil, err
 	}

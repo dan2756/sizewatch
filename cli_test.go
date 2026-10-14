@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -243,5 +246,129 @@ func TestOnceCompactsHistory(t *testing.T) {
 	}
 	if oldest := c.now.Sub(got[0].Time); oldest > 30*24*time.Hour {
 		t.Errorf("oldest sample is %v old", oldest)
+	}
+}
+
+// TestOnceConcurrentCooldown checks that runs sharing a history don't lose
+// each other's alert times when they save the cooldown at the same time.
+func TestOnceConcurrentCooldown(t *testing.T) {
+	for trial := range 5 {
+		c := newCLI(t)
+		const runs = 8
+		var dirs []string
+		for i := range runs {
+			dirs = append(dirs, filepath.Join(t.TempDir(), fmt.Sprintf("p%d", i)))
+			write(t, filepath.Join(dirs[i], "f"), 100)
+		}
+		var wg sync.WaitGroup
+		for _, dir := range dirs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, errOut, code := c.run("once", dir, "--max", "1B", "--quiet"); code != 0 {
+					t.Errorf("once %s: exit %d: %s", dir, code, errOut)
+				}
+			}()
+		}
+		wg.Wait()
+
+		data, err := os.ReadFile(cooldownFile(c.history))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var saved map[string]time.Time
+		if err := json.Unmarshal(data, &saved); err != nil {
+			t.Fatal(err)
+		}
+		if len(saved) != runs {
+			t.Fatalf("trial %d: cooldown file holds %d of %d paths:\n%s", trial, len(saved), runs, data)
+		}
+	}
+}
+
+// cancelOnWrite cancels a context when written to. As a hook's stdout it
+// stands in for a SIGTERM arriving while the hook runs. (It doesn't embed
+// the buffer, whose ReadFrom would let io.Copy bypass Write.)
+type cancelOnWrite struct {
+	buf    bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (w *cancelOnWrite) Write(p []byte) (int, error) {
+	w.cancel()
+	return w.buf.Write(p)
+}
+
+// TestStopMidRoundKeepsDonePaths checks that a round cut short after a
+// path alerted still records that path's sample and alert time.
+func TestStopMidRoundKeepsDonePaths(t *testing.T) {
+	c := newCLI(t)
+	a, b := filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")
+	write(t, filepath.Join(a, "f"), 100)
+	write(t, filepath.Join(b, "f"), 100)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := &cancelOnWrite{cancel: cancel}
+	var errb bytes.Buffer
+	app := &app{stdout: out, stderr: &errb, now: func() time.Time { return c.now }}
+	app.run(ctx, []string{"once", a, b, "--max", "1B", "--hook", "echo hook ran", "--history", c.history})
+	if ctx.Err() == nil {
+		t.Fatalf("the hook did not run:\n%s%s", out.buf.String(), errb.String())
+	}
+
+	samples, err := history.Open(c.history).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 1 || samples[0].Path != a {
+		t.Fatalf("history after the stopped round = %+v, want a's sample", samples)
+	}
+	c.now = c.now.Add(time.Minute)
+	stdout, _, code := c.run("once", a, "--max", "1B", "--hook", "echo hook ran")
+	if code != 0 || !strings.Contains(stdout, "max (cooldown)") || strings.Contains(stdout, "hook ran") {
+		t.Errorf("once after the stopped round (exit %d):\n%s", code, stdout)
+	}
+}
+
+type failWriter struct{}
+
+func (failWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
+
+func TestDuWriteError(t *testing.T) {
+	var errb bytes.Buffer
+	a := &app{stdout: failWriter{}, stderr: &errb, now: time.Now}
+	if code := a.run(context.Background(), []string{"du", t.TempDir()}); code != exitError || !strings.Contains(errb.String(), "no space") {
+		t.Errorf("du to a failing stdout: exit %d, stderr %q", code, errb.String())
+	}
+}
+
+// TestNonUTF8Path checks that a path the history can't store verbatim
+// still finds its own samples and cooldown.
+func TestNonUTF8Path(t *testing.T) {
+	c := newCLI(t)
+	dir := filepath.Join(t.TempDir(), "caf\xe9")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Skipf("file system rejects non-UTF-8 names: %v", err)
+	}
+	c.run("once", dir, "--apparent", "--quiet")
+
+	write(t, filepath.Join(dir, "a"), 200_000)
+	c.now = c.now.Add(5 * time.Minute)
+	var outs []outcomeJSON
+	c.runJSON(&outs, "once", dir, "--apparent", "--spike", "100KB")
+	if len(outs) != 1 || outs[0].PrevBytes == nil || outs[0].Alert != "fired" {
+		t.Fatalf("second once = %+v, want a spike against the first sample", outs)
+	}
+
+	write(t, filepath.Join(dir, "b"), 200_000)
+	c.now = c.now.Add(5 * time.Minute)
+	c.runJSON(&outs, "once", dir, "--apparent", "--spike", "100KB")
+	if outs[0].Alert != "cooldown" {
+		t.Errorf("third once: alert = %q, want cooldown", outs[0].Alert)
+	}
+
+	if out, errOut, code := c.run("report", dir); code != 0 || !strings.Contains(out, "TREND") {
+		t.Errorf("report (exit %d): %s%s", code, out, errOut)
 	}
 }

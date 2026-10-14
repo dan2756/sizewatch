@@ -30,7 +30,7 @@ func (a *app) report(ctx context.Context, args []string) error {
 			"history is shown.")
 	var hf historyFlags
 	hf.register(fs)
-	points := fs.Int("points", 24, "number of recent samples in the sparkline")
+	points := fs.Int("points", 24, "draw the sparkline from the last `N` samples")
 	jsonOut := fs.Bool("json", false, "print JSON instead of a table")
 	paths, err := a.parseArgs(fs, args)
 	if err != nil {
@@ -61,7 +61,7 @@ func (a *app) report(ctx context.Context, args []string) error {
 	}
 	sums := make([]summary, 0, len(paths))
 	for _, p := range paths {
-		ps := history.ForPath(samples, p)
+		ps := history.ForPath(samples, history.StoredPath(p))
 		if len(ps) == 0 {
 			a.errorf("no history for %s", p)
 			failed = true

@@ -25,10 +25,20 @@ var version = ""
 const usage = `sizewatch - tracks folder growth and runs a hook on spikes
 
 Usage:
-  sizewatch watch PATH... [flags]     sample every --interval, alert on growth
-  sizewatch once PATH... [flags]      take one sample and compare with the last
+  sizewatch watch PATH... [flags]     sample every --interval and alert on growth
+  sizewatch once PATH... [flags]      take one sample and compare it with the last
   sizewatch report [PATH...] [flags]  show sizes, recent change and a trend line
   sizewatch du PATH... [flags]        print the disk usage of each path
+
+Examples:
+  sizewatch watch ~/Downloads ./node_modules --interval 5m --spike 500MB \
+    --hook 'notify "$SIZEWATCH_PATH grew by $SIZEWATCH_DELTA_HUMAN"'
+  sizewatch once ~/Downloads --quiet --rate 1GB/h --max 20GB
+  sizewatch report --json
+
+Environment:
+  SIZEWATCH_HISTORY  history file (default $XDG_STATE_HOME/sizewatch/history.jsonl,
+                     else ~/.local/state/sizewatch/history.jsonl)
 
 Run 'sizewatch COMMAND -h' for the flags of a command.
 

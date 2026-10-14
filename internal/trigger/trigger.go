@@ -44,7 +44,10 @@ func Evaluate(c Config, prev *history.Sample, cur history.Sample) []Reason {
 			}
 			// Any growth from nothing is "infinite percent"; that's what
 			// --spike and --max are for, so pct needs a non-empty base.
-			if c.SpikePct > 0 && prev.Bytes > 0 && float64(delta)*100/float64(prev.Bytes) >= c.SpikePct {
+			// An empty folder isn't always 0 bytes (a directory takes a
+			// block on most Linux file systems), so it also needs a file.
+			if c.SpikePct > 0 && prev.Bytes > 0 && prev.Files > 0 &&
+				float64(delta)*100/float64(prev.Bytes) >= c.SpikePct {
 				out = append(out, Pct)
 			}
 			// Rate divides by the actual time between the samples, so it

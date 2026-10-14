@@ -114,3 +114,53 @@ func TestDefaultPath(t *testing.T) {
 	t.Setenv("SIZEWATCH_HISTORY", "/tmp/custom.jsonl")
 	check("/tmp/custom.jsonl")
 }
+
+// TestAppendAfterPartialLine checks that a fragment left by a write cut
+// short (a full disk) doesn't swallow the next sample.
+func TestAppendAfterPartialLine(t *testing.T) {
+	s := Open(filepath.Join(t.TempDir(), "h.jsonl"))
+	if err := s.Append(at(0, "/a", 1)); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(s.Path(), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"time":"2026-08-11T19:05:00Z","pa`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	if err := s.Append(at(10, "/a", 3)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[1].Bytes != 3 {
+		t.Errorf("Load() = %+v, want the samples before and after the fragment", got)
+	}
+}
+
+func TestStoredPath(t *testing.T) {
+	s := Open(filepath.Join(t.TempDir(), "h.jsonl"))
+	paths := []string{"/a/café", "/a/caf\xe9", "/a/\xe2\x82x", "/a/\xff\xfe"}
+	for i, p := range paths {
+		if err := s.Append(at(i, p, 1)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := s.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, p := range paths {
+		if got[i].Path != StoredPath(p) {
+			t.Errorf("%q reads back as %q, StoredPath gives %q", p, got[i].Path, StoredPath(p))
+		}
+	}
+	if StoredPath(paths[0]) != paths[0] {
+		t.Errorf("StoredPath changed a valid path")
+	}
+}

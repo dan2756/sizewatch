@@ -41,7 +41,8 @@ type outcome struct {
 
 // round measures each path once, runs the hook for those that trigger and
 // appends the samples to the history. Hooks run before the history is
-// written so that a full disk still gets its alert.
+// written so that a full disk still gets its alert. If ctx ends mid-round,
+// the paths measured so far are still recorded, along with their alerts.
 func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) {
 	outs := make([]outcome, 0, len(paths))
 	var fresh []history.Sample
@@ -49,7 +50,7 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 		start := m.a.now().UTC().Truncate(time.Second)
 		res, err := walk.Measure(ctx, p, m.measure)
 		if ctx.Err() != nil {
-			return outs, ctx.Err()
+			break
 		}
 		o := outcome{Sample: history.Sample{Time: start, Path: p}}
 		if err != nil {
@@ -58,10 +59,11 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 			continue
 		}
 		o.Sample.Bytes, o.Sample.Files, o.Warnings = res.Bytes, res.Files, res.Warnings
-		if prev, ok := m.prev[p]; ok {
+		key := history.StoredPath(p)
+		if prev, ok := m.prev[key]; ok {
 			o.Prev = &prev
 		}
-		m.prev[p] = o.Sample
+		m.prev[key] = o.Sample
 		fresh = append(fresh, o.Sample)
 		o.Reasons = trigger.Evaluate(m.triggers, o.Prev, o.Sample)
 		if len(o.Reasons) > 0 {
@@ -69,13 +71,28 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 		}
 		outs = append(outs, o)
 	}
-	if err := m.cooldown.Save(m.coolFile, m.a.now()); err != nil {
+	if err := m.saveCooldown(); err != nil {
 		m.a.errorf("warning: saving cooldown state: %v", err)
 	}
 	if err := m.store.Append(fresh...); err != nil {
 		return outs, fmt.Errorf("saving history: %w", err)
 	}
-	return outs, nil
+	return outs, ctx.Err()
+}
+
+// saveCooldown persists the alert times recorded since the last save. It
+// holds the history lock, since other runs sharing the history merge their
+// alert times into the same file.
+func (m *monitor) saveCooldown() error {
+	if !m.cooldown.Unsaved() {
+		return nil
+	}
+	unlock, err := m.store.Lock()
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	return m.cooldown.Save(m.coolFile, m.a.now())
 }
 
 // newMonitor sets up a monitor from the shared flags, loading the latest
@@ -110,7 +127,7 @@ func (a *app) newMonitor(mf *measureFlags, tf *triggerFlags, hf *historyFlags) (
 // alert runs the hook for a triggered outcome unless the path is cooling
 // down from an earlier alert.
 func (m *monitor) alert(ctx context.Context, o *outcome) {
-	if !m.cooldown.Allow(o.Sample.Path, m.a.now()) {
+	if !m.cooldown.Allow(history.StoredPath(o.Sample.Path), m.a.now()) {
 		o.Cooldown = true
 		return
 	}

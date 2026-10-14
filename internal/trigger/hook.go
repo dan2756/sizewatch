@@ -53,11 +53,18 @@ func (e Event) Env() []string {
 }
 
 // RunHook runs command with sh -c and the event in its environment, and
-// waits for it. The hook's output goes to stdout and stderr.
+// waits for it. The hook's output goes to stdout and stderr. If ctx ends
+// first, the hook is killed along with the processes it started.
 func RunHook(ctx context.Context, command string, ev Event, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Env = append(os.Environ(), ev.Env()...)
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	// Only a context that can end needs a group to kill. Otherwise (once
+	// has no signal handling) the hook stays in our process group, where a
+	// terminal's Ctrl-C reaches it along with sizewatch.
+	if ctx.Done() != nil {
+		killGroupOnCancel(cmd)
+	}
 	// A hook that backgrounds a child may leave our pipes open; don't wait
 	// on that child forever.
 	cmd.WaitDelay = 2 * time.Second

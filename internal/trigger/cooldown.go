@@ -52,10 +52,14 @@ func LoadCooldown(file string, period time.Duration) (*Cooldown, error) {
 	return c, nil
 }
 
+// Unsaved reports whether an alert was recorded since loading or saving.
+func (c *Cooldown) Unsaved() bool { return c.dirty }
+
 // Save writes the alert times to file if any alert was recorded. It merges
 // with what is already there, keeping the latest time per path, because a
-// watch and a cron job may share the file. Entries older than both the
-// period and 30 days are dropped.
+// watch and a cron job may share the file; the caller must keep other
+// writers out until it returns. Entries older than both the period and 30
+// days are dropped.
 func (c *Cooldown) Save(file string, now time.Time) error {
 	if !c.dirty {
 		return nil

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"time"
+	"unicode/utf8"
 )
 
 // Sample is one measurement of one path.
@@ -63,14 +64,22 @@ func (s *Store) Append(samples ...Sample) error {
 	if err != nil {
 		return err
 	}
-	unlock, err := s.lock()
+	unlock, err := s.Lock()
 	if err != nil {
 		return err
 	}
 	defer unlock()
-	f, err := os.OpenFile(s.path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	f, err := os.OpenFile(s.path, os.O_RDWR|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return err
+	}
+	// A write cut short, by a full disk say, leaves a partial last line.
+	// Start on a new line so that only the fragment is lost.
+	if fi, err := f.Stat(); err == nil && fi.Size() > 0 {
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, fi.Size()-1); err == nil && last[0] != '\n' {
+			buf = append([]byte{'\n'}, buf...)
+		}
 	}
 	if _, err := f.Write(buf); err != nil {
 		f.Close()
@@ -111,6 +120,16 @@ func (s *Store) Load() ([]Sample, error) {
 	// Concurrent writers can interleave slightly out of order.
 	sortByTime(out)
 	return out, nil
+}
+
+// StoredPath returns path as it reads back from the history. JSON can't
+// hold invalid UTF-8, so each invalid byte is stored as U+FFFD; look paths
+// up in loaded samples by this form.
+func StoredPath(path string) string {
+	if utf8.ValidString(path) {
+		return path
+	}
+	return string([]rune(path)) // turns each invalid byte into U+FFFD
 }
 
 func encode(samples []Sample) ([]byte, error) {
