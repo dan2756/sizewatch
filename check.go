@@ -63,7 +63,6 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 		if prev, ok := m.prev[key]; ok {
 			o.Prev = &prev
 		}
-		m.prev[key] = o.Sample
 		fresh = append(fresh, o.Sample)
 		o.Reasons = trigger.Evaluate(m.triggers, o.Prev, o.Sample)
 		if len(o.Reasons) > 0 {
@@ -76,6 +75,12 @@ func (m *monitor) round(ctx context.Context, paths []string) ([]outcome, error) 
 	}
 	if err := m.store.Append(fresh...); err != nil {
 		return outs, fmt.Errorf("saving history: %w", err)
+	}
+	// A sample that did not land in the history must not become the next
+	// baseline. watch keeps this map across rounds; moving it forward after
+	// a failed save (a full disk) would split one spike across two deltas.
+	for _, s := range fresh {
+		m.prev[history.StoredPath(s.Path)] = s
 	}
 	return outs, ctx.Err()
 }
