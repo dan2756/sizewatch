@@ -109,6 +109,8 @@ func TestParseDuration(t *testing.T) {
 		{"2w3d", 17 * 24 * time.Hour},
 		{"1d12h", 36 * time.Hour},
 		{" 12h ", 12 * time.Hour},
+		// Just under the int64 limit: 15250w + 48h overflows.
+		{"15250w47h", 15250*7*24*time.Hour + 47*time.Hour},
 	}
 	for _, tt := range tests {
 		got, err := ParseDuration(tt.in)
@@ -116,7 +118,7 @@ func TestParseDuration(t *testing.T) {
 			t.Errorf("ParseDuration(%q) = %v, %v; want %v", tt.in, got, err, tt.want)
 		}
 	}
-	for _, in := range []string{"", "5", "d", "1.5d", "-5m", "1d-1h", "3x", "1d1w", "99999999999999w"} {
+	for _, in := range []string{"", "5", "d", "1.5d", "-5m", "1d-1h", "3x", "1d1w", "99999999999999w", "15250w48h", "15250w2d", "106751d24h"} {
 		if got, err := ParseDuration(in); err == nil {
 			t.Errorf("ParseDuration(%q) = %v, want error", in, got)
 		}

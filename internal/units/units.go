@@ -113,7 +113,10 @@ func ParseDuration(s string) (time.Duration, error) {
 		if err != nil || n > int64(math.MaxInt64/u.unit) {
 			return 0, bad
 		}
-		total += time.Duration(n) * u.unit
+		total, err = addDuration(total, time.Duration(n)*u.unit)
+		if err != nil {
+			return 0, bad
+		}
 		rest = rest[i+1:]
 	}
 	if rest != "" {
@@ -121,9 +124,22 @@ func ParseDuration(s string) (time.Duration, error) {
 		if err != nil {
 			return 0, bad
 		}
-		total += d
+		total, err = addDuration(total, d)
+		if err != nil {
+			return 0, bad
+		}
 	}
 	return total, nil
+}
+
+// addDuration adds extra to total. Each piece can fit in an int64 while the
+// sum does not (15250w48h); wrapping would turn a huge --cooldown or --keep
+// into a negative duration, which disables them.
+func addDuration(total, extra time.Duration) (time.Duration, error) {
+	if extra < 0 || total > math.MaxInt64-extra {
+		return 0, fmt.Errorf("duration overflow")
+	}
+	return total + extra, nil
 }
 
 // FormatDuration renders d compactly: "0", "90s", "5m", "1h30m", "30d".
