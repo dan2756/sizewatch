@@ -78,6 +78,13 @@ func (s *Store) rewrite(samples []Sample) error {
 	if err != nil {
 		return err
 	}
+	// Keep the mode the file already has. CreateTemp plus a forced 0644
+	// would publish a history the user had made private (chmod 0600, or a
+	// restrictive umask on the original append).
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(s.path); err == nil {
+		mode = fi.Mode().Perm()
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(s.path), filepath.Base(s.path)+".tmp*")
 	if err != nil {
 		return err
@@ -94,7 +101,7 @@ func (s *Store) rewrite(samples []Sample) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), s.path)

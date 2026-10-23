@@ -271,6 +271,36 @@ func TestCooldownPersists(t *testing.T) {
 	}
 }
 
+func TestCooldownSavePreservesMode(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "cooldown.json")
+	c, err := LoadCooldown(file, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Allow("/a", t0) {
+		t.Fatal("first alert held back")
+	}
+	if err := c.Save(file, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(file, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Allow("/b", t0.Add(time.Minute)) {
+		t.Fatal("second path held back")
+	}
+	if err := c.Save(file, t0.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("cooldown file mode = %o, want 600", fi.Mode().Perm())
+	}
+}
+
 func TestLoadCooldownCorrupt(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "cooldown.json")
 	if err := os.WriteFile(file, []byte("{not json"), 0o644); err != nil {
