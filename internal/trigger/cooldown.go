@@ -94,6 +94,11 @@ func writeFileAtomic(file string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
 		return err
 	}
+	// Don't replace a private cooldown file with mode 0644.
+	mode := os.FileMode(0o644)
+	if fi, err := os.Stat(file); err == nil {
+		mode = fi.Mode().Perm()
+	}
 	tmp, err := os.CreateTemp(filepath.Dir(file), filepath.Base(file)+".tmp*")
 	if err != nil {
 		return err
@@ -106,7 +111,7 @@ func writeFileAtomic(file string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(tmp.Name(), mode); err != nil {
 		return err
 	}
 	return os.Rename(tmp.Name(), file)

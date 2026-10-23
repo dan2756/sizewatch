@@ -126,6 +126,27 @@ func TestStoreCompact(t *testing.T) {
 	}
 }
 
+func TestCompactPreservesMode(t *testing.T) {
+	now := time.Date(2026, 9, 20, 10, 0, 0, 0, time.UTC)
+	s := Open(filepath.Join(t.TempDir(), "history.jsonl"))
+	if err := s.Append(series(now.Add(-40*24*time.Hour), now, time.Hour, "/a")...); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(s.Path(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Compact(now, 30*24*time.Hour, 1); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(s.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Errorf("compacted file mode = %o, want 600", fi.Mode().Perm())
+	}
+}
+
 // TestCompactDuringAppends checks that the lock keeps compaction from
 // losing samples that other writers append meanwhile.
 func TestCompactDuringAppends(t *testing.T) {
