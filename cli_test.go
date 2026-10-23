@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -334,6 +335,68 @@ func TestStopMidRoundKeepsDonePaths(t *testing.T) {
 type failWriter struct{}
 
 func (failWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
+
+// TestBaselineSurvivesHistoryWriteFailure checks that a sample whose write
+// failed stays out of the baseline. watch keeps that baseline in memory, so
+// advancing it anyway would hide a spike that straddles the failure.
+func TestBaselineSurvivesHistoryWriteFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file mode")
+	}
+	c := newCLI(t)
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "a"), 1000)
+
+	var stderr bytes.Buffer
+	now := c.now
+	a := &app{stdout: io.Discard, stderr: &stderr, now: func() time.Time { return now }}
+	m, err := a.newMonitor(
+		&measureFlags{apparent: true},
+		&triggerFlags{spike: 500_000},
+		&historyFlags{file: c.history},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := m.round(context.Background(), []string{dir})
+	if err != nil || len(first) != 1 || first[0].Sample.Bytes != 1000 {
+		t.Fatalf("first round: %+v, %v", first, err)
+	}
+
+	// 400 KB is under the 500 KB spike, and the write is refused.
+	write(t, filepath.Join(dir, "b"), 400_000)
+	if err := os.Chmod(c.history, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	now = now.Add(time.Minute)
+	if _, err := m.round(context.Background(), []string{dir}); err == nil {
+		t.Fatal("second round saved history that was mode 0444")
+	}
+	if err := os.Chmod(c.history, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Another 200 KB crosses 500 KB from the last saved sample, but not
+	// from the sample the failed round measured.
+	write(t, filepath.Join(dir, "c"), 200_000)
+	now = now.Add(time.Minute)
+	third, err := m.round(context.Background(), []string{dir})
+	if err != nil {
+		t.Fatalf("third round: %v\nstderr: %s", err, stderr.String())
+	}
+	if len(third) != 1 || third[0].Prev == nil || third[0].Prev.Bytes != 1000 || !third[0].fired() {
+		t.Fatalf("third round = %+v, want a spike against the 1000-byte sample", third)
+	}
+
+	got, err := history.Open(c.history).Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Bytes != 1000 || got[1].Bytes != third[0].Sample.Bytes {
+		t.Fatalf("history = %+v, want the first sample and the third", got)
+	}
+}
 
 func TestDuWriteError(t *testing.T) {
 	var errb bytes.Buffer
